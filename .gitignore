@@ -37,3 +37,5 @@ npm-debug.log*
 *.swp
 .DS_Store
 Thumbs.db
+
+.ref/
