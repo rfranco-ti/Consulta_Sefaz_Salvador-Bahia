@@ -1,0 +1,22 @@
+<html>
+<head><title>DAM TFF/TLL - Cotas</title></head>
+<body>
+<span class="PS_label">Contribuinte: PADARIA TESTE LTDA</span>
+<span class="PS_label">Inscrição: 1234567890123</span>
+<p>CNPJ: 12.345.678/0001-95</p>
+<form name="frmDAMIFF">
+<select id="opcCotas" name="opcCotas">
+<option value="0">1 - TFF</option>
+<option value="1">2 - TFF</option>
+</select>
+<table><tbody>
+<tr><th>Cota</th><th>Situação</th><th>Valor Original</th><th>Valor Corrigido</th><th>Vencimento</th></tr>
+<tr><td>1</td><td>Não paga</td><td>100,00</td><td>100,00</td><td>14/11/2026</td></tr>
+<tr><td>2</td><td>Não paga</td><td>200,00</td><td>200,00</td><td>14/12/2026</td></tr>
+</tbody></table>
+<input type="hidden" id="vencimentoParcela_0" value="14/11/2026" />
+<input type="hidden" id="vencimentoParcela_1" value="14/12/2026" />
+<input type="button" id="bt_dam" value="Emitir boleto" onclick="var s=document.getElementById('opcCotas');window.location.href='DAMForm.asp?cota='+encodeURIComponent(s?s.value:'0');" />
+</form>
+</body>
+</html>

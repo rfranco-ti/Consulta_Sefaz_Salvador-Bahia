@@ -1,0 +1,42 @@
+<html>
+<head><title>DAM TFF/TLL - Cotas</title></head>
+<body>
+<span class="PS_label">Contribuinte: PADARIA TESTE LTDA</span>
+<span class="PS_label">Inscrição: 1234567890123</span>
+<p>CNPJ: 12.345.678/0001-95</p>
+<form name="frmDAMIFF">
+<select id="opcCotas" name="opcCotas">
+<option value="0">1 - TFF</option>
+<option value="1">2 - TFF</option>
+<option value="2">3 - TFF</option>
+</select>
+<table><tbody>
+<tr><th>Cota</th><th>Situação</th><th>Valor Original</th><th>Valor Corrigido</th><th>Vencimento</th></tr>
+<tr><td>1</td><td>Não paga</td><td>100,00</td><td>100,00</td><td>14/11/2026</td></tr>
+<tr><td>2</td><td>Não paga</td><td>200,00</td><td>200,00</td><td>14/12/2026</td></tr>
+<tr><td>3</td><td>Quitada</td><td>300,00</td><td>300,00</td><td>14/01/2027</td></tr>
+</tbody></table>
+<input type="hidden" id="vencimentoParcela_0" value="14/11/2026" />
+<input type="hidden" id="vencimentoParcela_1" value="14/12/2026" />
+<input type="hidden" id="vencimentoParcela_2" value="14/01/2027" />
+<input type="button" id="bt_dam" value="Emitir boleto" onclick="emitirBoletoSelecionado();" />
+<div id="divPDF"></div>
+</form>
+<script>
+var PDFS_EMBUTIDOS = {
+  '0': 'JVBERi0xLjQKMSAwIG9iajw8Lz4+ZW5kb2JqCnRyYWlsZXI8PC9Sb290IDEgMCBSPj4KJSVFT0Y=',
+  '1': 'JVBERi0xLjQgY290YTIgZGFtLXRmZi10bGwgdGVzdGU='
+};
+function emitirBoletoSelecionado() {
+  var s = document.getElementById('opcCotas');
+  var v = s ? s.value : '0';
+  var div = document.getElementById('divPDF');
+  div.innerHTML = '';
+  var e = document.createElement('embed');
+  e.id = 'pdfID';
+  e.setAttribute('src', 'data:application/pdf;base64,' + (PDFS_EMBUTIDOS[v] || PDFS_EMBUTIDOS['0']));
+  div.appendChild(e);
+}
+</script>
+</body>
+</html>
