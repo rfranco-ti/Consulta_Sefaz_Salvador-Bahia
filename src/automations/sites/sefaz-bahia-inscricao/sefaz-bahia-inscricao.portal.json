@@ -1,0 +1,97 @@
+{
+  "metadata": {
+    "nome": "SEFAZ Bahia por Inscrição Estadual",
+    "sigla": "SEFAZ_BA",
+    "versao": "1.0",
+    "autor": "api-sefaz-ssa",
+    "dataCriacao": "2026-10-05",
+    "dataUltimaValidacao": "2026-10-05",
+    "urlOficial": "https://portal.sefaz.ba.gov.br/scripts/cadastro/cadastroBa/consultaBa.asp",
+    "descricao": "Consulta cadastro de contribuintes pela Inscrição Estadual no portal da SEFAZ Bahia"
+  },
+  "human": {
+    "perfil": "normal"
+  },
+  "recursos": {
+    "bloquearTipos": ["font", "media"],
+    "bloquearHosts": ["google-analytics.com", "googletagmanager.com", "googleadservices.com", "doubleclick.net", "hotjar.com", "clarity.ms", "facebook.net", "mixpanel.com"]
+  },
+  "navegacao": {
+    "url": "https://portal.sefaz.ba.gov.br/scripts/cadastro/cadastroBa/consultaBa.asp",
+    "timeout": 30000,
+    "waitUntil": "domcontentloaded"
+  },
+  "seletores": {
+    "campo_inscricao_estadual": {
+      "descricao": "Campo de Inscrição Estadual do formulário de consulta",
+      "seletores": [
+        "input[name*='inscricao']",
+        "input[placeholder*='Inscri']",
+        "xpath=//form//input[@type='text']"
+      ]
+    },
+    "botao_consultar": {
+      "descricao": "Botão que submete a consulta",
+      "seletores": [
+        "input[value='Consultar']",
+        "text=Consultar",
+        "xpath=//form//input[@type='submit']"
+      ]
+    },
+    "tabela_resultado": {
+      "descricao": "Sinal de que a página de resultado carregou",
+      "seletores": [
+        "#Table7",
+        "text=Informações Complementares",
+        "xpath=//td[contains(., 'Situação Cadastral Vigente')]"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "id": "navegar-portal",
+      "descricao": "Abre a página de consulta do portal",
+      "acao": "navegar"
+    },
+    {
+      "id": "preencher-inscricao",
+      "descricao": "Preenche o campo de Inscrição Estadual",
+      "acao": "preencher",
+      "chaveSeletor": "campo_inscricao_estadual"
+    },
+    {
+      "id": "submeter-consulta",
+      "descricao": "Clica em Consultar",
+      "acao": "clicar",
+      "chaveSeletor": "botao_consultar"
+    },
+    {
+      "id": "aguardar-resultado",
+      "descricao": "Aguarda a tabela de resultado carregar",
+      "acao": "esperar",
+      "chaveSeletor": "tabela_resultado"
+    },
+    {
+      "id": "extrair-dados",
+      "descricao": "Extrai o cadastro por mapa de rótulos",
+      "acao": "avaliar"
+    },
+    {
+      "id": "gerar-artefatos",
+      "descricao": "Gera print e PDF após a extração",
+      "acao": "capturar-download"
+    }
+  ],
+  "extracao": {
+    "estrategia": "mapa-rotulos",
+    "descricao": "Mapa rótulo→valor a partir das tabelas Table5, Table7, Table11, Table13 e Table18; imune a re-layout enquanto os rótulos em negrito forem mantidos",
+    "tabelas": ["Table5", "Table7", "Table11", "Table13", "Table18"],
+    "obrigatorio": ["inscricaoEstadual"]
+  },
+  "artefatos": {
+    "ordem": "apos-extracao",
+    "print": { "formato": "jpeg", "qualidade": 70, "paginaInteira": true },
+    "pdf": { "formato": "A4", "fundo": true }
+  },
+  "captcha": { "exigido": false }
+}

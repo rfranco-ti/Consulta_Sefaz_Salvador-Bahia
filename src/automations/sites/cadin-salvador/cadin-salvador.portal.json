@@ -2,12 +2,12 @@
   "metadata": {
     "nome": "CADIN Salvador",
     "sigla": "CADIN_SALVADOR",
-    "versao": "1.0",
-    "autor": "Tech Lead - eContabil",
+    "versao": "2.0",
+    "autor": "api-sefaz-ssa",
     "dataCriacao": "2026-08-10",
-    "dataUltimaValidacao": "2026-08-10",
+    "dataUltimaValidacao": "2026-10-05",
     "urlOficial": "http://www.cadin.sefaz.salvador.ba.gov.br/CADIN/default.aspx",
-    "descricao": "Consulta ao Cadastro Informativo Municipal (CADIN) de Salvador"
+    "descricao": "Consulta ao Cadastro Informativo Municipal (CADIN) de Salvador por CPF ou CNPJ, com captcha local e relatório em template fixo"
   },
   "human": {
     "perfil": "normal"
@@ -21,9 +21,124 @@
     "timeout": 30000,
     "waitUntil": "domcontentloaded"
   },
-  "captcha": {
-    "seletoresImagem": ["img[src*=\"CaptchaImage.aspx\"]"]
+  "seletores": {
+    "radio_pf": {
+      "descricao": "Opção de pessoa física no formulário do CADIN",
+      "seletores": [
+        "#ctl00_ContentPlaceHolder1_rbtipodocumento_0",
+        "input[name*='rbtipodocumento'][value='PF']",
+        "xpath=//input[contains(@id, 'rbtipodocumento_0')]"
+      ]
+    },
+    "radio_pj": {
+      "descricao": "Opção de pessoa jurídica no formulário do CADIN",
+      "seletores": [
+        "#ctl00_ContentPlaceHolder1_rbtipodocumento_1",
+        "input[name*='rbtipodocumento'][value='PJ']",
+        "xpath=//input[contains(@id, 'rbtipodocumento_1')]"
+      ]
+    },
+    "campo_documento": {
+      "descricao": "Campo de CPF ou CNPJ do formulário de consulta",
+      "seletores": [
+        "#ctl00_ContentPlaceHolder1_TxtNumDocumento",
+        "input[placeholder*='ocumento']",
+        "xpath=//input[contains(@id, 'TxtNumDocumento')]"
+      ]
+    },
+    "imagem_captcha": {
+      "descricao": "Imagem do captcha exibida no formulário",
+      "seletores": [
+        "img[src*='CaptchaImage.aspx']",
+        "img[id*='aptcha']",
+        "xpath=//img[contains(@src, 'CaptchaImage')]"
+      ]
+    },
+    "campo_captcha": {
+      "descricao": "Campo visível onde o código do captcha é digitado",
+      "seletores": [
+        "input[name='ctl00$ContentPlaceHolder1$CaptchaControl1']",
+        "input[placeholder*='aptcha']",
+        "xpath=//input[contains(@name, 'CaptchaControl')]"
+      ]
+    },
+    "botao_consultar": {
+      "descricao": "Botão que submete a consulta do CADIN",
+      "seletores": [
+        "#ctl00_ContentPlaceHolder1_btnConsultar",
+        "input[value='Consultar']",
+        "xpath=//input[contains(@id, 'btnConsultar')]"
+      ]
+    },
+    "bloco_resultado": {
+      "descricao": "Sinal de que a página de resultado do CADIN carregou",
+      "seletores": [
+        "#divResultado",
+        "#ctl00_ContentPlaceHolder1_lblMensagem",
+        "xpath=//*[contains(@id, 'lblMensagem')]"
+      ]
+    }
   },
-  "steps": [],
-  "extracao": {}
+  "steps": [
+    {
+      "id": "navegar-portal",
+      "descricao": "Abre a página de consulta do CADIN Salvador",
+      "acao": "navegar"
+    },
+    {
+      "id": "selecionar-tipo-documento",
+      "descricao": "Seleciona pessoa física ou jurídica conforme o documento",
+      "acao": "clicar",
+      "chaveSeletor": "radio_pj"
+    },
+    {
+      "id": "preencher-documento",
+      "descricao": "Preenche o CPF ou CNPJ",
+      "acao": "preencher",
+      "chaveSeletor": "campo_documento"
+    },
+    {
+      "id": "resolver-captcha",
+      "descricao": "Fotografa o captcha, resolve localmente e preenche o código",
+      "acao": "preencher",
+      "chaveSeletor": "campo_captcha"
+    },
+    {
+      "id": "submeter-consulta",
+      "descricao": "Clica em Consultar",
+      "acao": "clicar",
+      "chaveSeletor": "botao_consultar"
+    },
+    {
+      "id": "aguardar-resultado",
+      "descricao": "Aguarda o bloco de resultado carregar",
+      "acao": "esperar",
+      "chaveSeletor": "bloco_resultado"
+    },
+    {
+      "id": "extrair-dados",
+      "descricao": "Extrai mensagem, contribuinte e pendências por identificadores",
+      "acao": "avaliar"
+    },
+    {
+      "id": "gerar-artefatos",
+      "descricao": "Gera print e relatório em PDF de template fixo após a extração",
+      "acao": "capturar-download"
+    }
+  ],
+  "extracao": {
+    "estrategia": "mapa-ids",
+    "descricao": "Mapa sufixo→valor a partir dos identificadores ASP.NET sob o prefixo ctl00_ContentPlaceHolder1_ mais as linhas da tabela dentro de #divResultado; imune a re-layout enquanto os identificadores forem mantidos",
+    "prefixo": "ctl00_ContentPlaceHolder1_",
+    "obrigatorio": ["mensagem"]
+  },
+  "artefatos": {
+    "ordem": "apos-extracao",
+    "print": { "formato": "jpeg", "qualidade": 70, "paginaInteira": true },
+    "pdf": { "formato": "A4", "fundo": true }
+  },
+  "captcha": {
+    "exigido": true,
+    "seletoresImagem": ["img[src*='CaptchaImage.aspx']"]
+  }
 }

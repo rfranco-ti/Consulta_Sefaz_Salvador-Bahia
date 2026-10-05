@@ -1,0 +1,97 @@
+{
+  "metadata": {
+    "nome": "SEFAZ Bahia — Sócio",
+    "sigla": "SEFAZ_BA",
+    "versao": "1.0",
+    "autor": "api-sefaz-ssa",
+    "dataCriacao": "2026-10-05",
+    "dataUltimaValidacao": "2026-10-05",
+    "urlOficial": "https://portal.sefaz.ba.gov.br/scripts/cadastro/socio/socio.asp",
+    "descricao": "Consulta de estabelecimentos vinculados ao CPF do sócio no portal da SEFAZ Bahia"
+  },
+  "human": {
+    "perfil": "normal"
+  },
+  "recursos": {
+    "bloquearTipos": ["font", "media"],
+    "bloquearHosts": ["google-analytics.com", "googletagmanager.com", "googleadservices.com", "doubleclick.net", "hotjar.com", "clarity.ms", "facebook.net", "mixpanel.com"]
+  },
+  "navegacao": {
+    "url": "https://portal.sefaz.ba.gov.br/scripts/cadastro/socio/socio.asp",
+    "timeout": 30000,
+    "waitUntil": "domcontentloaded"
+  },
+  "seletores": {
+    "campo_cpf": {
+      "descricao": "Campo de CPF do formulário de consulta de sócio",
+      "seletores": [
+        "input[name='CPF']",
+        "input[placeholder*='CPF']",
+        "xpath=//input[contains(@name, 'CPF')]"
+      ]
+    },
+    "botao_consultar": {
+      "descricao": "Botão que submete a consulta de sócio",
+      "seletores": [
+        "input[name='B3']",
+        "input[value='Consultar']",
+        "xpath=//input[@type='submit']"
+      ]
+    },
+    "tabela_resultado": {
+      "descricao": "Sinal de que a página de resultado do sócio carregou",
+      "seletores": [
+        "#TabelaEstabelecimentos",
+        "text=Estabelecimentos aos quais",
+        "xpath=//td[contains(., 'Data da Consulta')]"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "id": "navegar-portal",
+      "descricao": "Abre a página de consulta de sócio do portal",
+      "acao": "navegar"
+    },
+    {
+      "id": "preencher-cpf",
+      "descricao": "Preenche o campo de CPF",
+      "acao": "preencher",
+      "chaveSeletor": "campo_cpf"
+    },
+    {
+      "id": "submeter-consulta",
+      "descricao": "Clica em Consultar",
+      "acao": "clicar",
+      "chaveSeletor": "botao_consultar"
+    },
+    {
+      "id": "aguardar-resultado",
+      "descricao": "Aguarda a tabela de estabelecimentos carregar",
+      "acao": "esperar",
+      "chaveSeletor": "tabela_resultado"
+    },
+    {
+      "id": "extrair-dados",
+      "descricao": "Extrai o sócio e os estabelecimentos por mapa de rótulos",
+      "acao": "avaliar"
+    },
+    {
+      "id": "gerar-artefatos",
+      "descricao": "Gera print e PDF após a extração",
+      "acao": "capturar-download"
+    }
+  ],
+  "extracao": {
+    "estrategia": "mapa-rotulos",
+    "descricao": "Mapa rótulo→valor a partir das tabelas TabelaSocio, TabelaEstabelecimentos e TabelaConsulta; imune a re-layout enquanto os rótulos em negrito forem mantidos",
+    "tabelas": ["TabelaSocio", "TabelaEstabelecimentos", "TabelaConsulta"],
+    "obrigatorio": []
+  },
+  "artefatos": {
+    "ordem": "apos-extracao",
+    "print": { "formato": "jpeg", "qualidade": 70, "paginaInteira": true },
+    "pdf": { "formato": "A4", "fundo": true }
+  },
+  "captcha": { "exigido": false }
+}

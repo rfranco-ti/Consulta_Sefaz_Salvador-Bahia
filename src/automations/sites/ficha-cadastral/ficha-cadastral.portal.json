@@ -1,13 +1,13 @@
 {
   "metadata": {
     "nome": "Ficha Cadastral Salvador",
-    "sigla": "FICHA_CADASTRAL",
-    "versao": "1.0",
-    "autor": "Tech Lead - eContabil",
+    "sigla": "PREF_SALVADOR",
+    "versao": "2.0",
+    "autor": "api-sefaz-ssa",
     "dataCriacao": "2026-08-10",
-    "dataUltimaValidacao": "2026-08-10",
+    "dataUltimaValidacao": "2026-10-05",
     "urlOficial": "https://servicosweb.sefaz.salvador.ba.gov.br/WebsiteV2/Sistemas/AlvaraCgaInternet/Modulos/Principal/AlvaraCgaEmissaoFichaResumidaFrm.aspx",
-    "descricao": "Ficha Cadastral resumida (CGA) em Salvador"
+    "descricao": "Ficha Cadastral resumida (CGA) da SEFAZ Salvador por CNPJ, com download do PDF oficial e extração do texto por OCR local"
   },
   "human": {
     "perfil": "rapido"
@@ -21,6 +21,89 @@
     "timeout": 30000,
     "waitUntil": "domcontentloaded"
   },
-  "steps": [],
-  "extracao": {}
+  "seletores": {
+    "radio_cnpj": {
+      "descricao": "Opção de pesquisa por CNPJ no formulário da ficha",
+      "seletores": [
+        "#ctl00_ContentPlaceHolderPrincipal_RdBNuCnpj",
+        "input[name*='RdBNuCnpj']",
+        "xpath=//input[contains(@id, 'RdBNuCnpj')]"
+      ]
+    },
+    "campo_cnpj": {
+      "descricao": "Campo de CNPJ do formulário da ficha",
+      "seletores": [
+        "#ctl00_ContentPlaceHolderPrincipal_txtNuCnpj",
+        "input[name*='txtNuCnpj']",
+        "xpath=//input[contains(@id, 'txtNuCnpj')]"
+      ]
+    },
+    "botao_consultar": {
+      "descricao": "Botão que submete a consulta e dispara o download do PDF oficial",
+      "seletores": [
+        "#ctl00_ContentPlaceHolderPrincipal_BtnConsultar0",
+        "input[value='Consultar']",
+        "xpath=//input[contains(@id, 'BtnConsultar')]"
+      ]
+    },
+    "mensagem_erro": {
+      "descricao": "Texto de validação do portal quando o CNPJ não é encontrado",
+      "seletores": [
+        "#ctl00_mspMensagem",
+        "#ctl00_updMensagemErro",
+        "xpath=//span[contains(@id, 'mspMensagem')]"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "id": "navegar-portal",
+      "descricao": "Abre a página da ficha cadastral resumida",
+      "acao": "navegar"
+    },
+    {
+      "id": "selecionar-tipo-cnpj",
+      "descricao": "Marca a opção de pesquisa por CNPJ",
+      "acao": "clicar",
+      "chaveSeletor": "radio_cnpj"
+    },
+    {
+      "id": "preencher-cnpj",
+      "descricao": "Preenche o campo de CNPJ",
+      "acao": "preencher",
+      "chaveSeletor": "campo_cnpj"
+    },
+    {
+      "id": "submeter-consulta",
+      "descricao": "Clica em Consultar",
+      "acao": "clicar",
+      "chaveSeletor": "botao_consultar"
+    },
+    {
+      "id": "aguardar-download",
+      "descricao": "Aguarda o download do PDF oficial ou a mensagem de erro do portal",
+      "acao": "capturar-download"
+    },
+    {
+      "id": "extrair-dados",
+      "descricao": "Extrai o texto do PDF oficial pela porta OCR e converte em dados",
+      "acao": "avaliar"
+    },
+    {
+      "id": "gerar-artefatos",
+      "descricao": "Registra o PDF oficial e gera print após a extração",
+      "acao": "capturar-download"
+    }
+  ],
+  "extracao": {
+    "estrategia": "pdf-ocr",
+    "descricao": "Download do PDF oficial seguido de extração do texto pela porta OCR (Fase 5 pluga pdfjs e tesseract); linhas no formato ROTULO: valor convertidas em campos; imune a re-layout enquanto os rótulos do PDF forem mantidos",
+    "obrigatorio": ["inscricaoMunicipal"]
+  },
+  "artefatos": {
+    "ordem": "apos-extracao",
+    "print": { "formato": "jpeg", "qualidade": 70, "paginaInteira": true },
+    "pdf": { "formato": "A4", "fundo": true }
+  },
+  "captcha": { "exigido": false }
 }

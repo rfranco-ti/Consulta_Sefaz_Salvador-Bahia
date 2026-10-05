@@ -1,13 +1,13 @@
 {
   "metadata": {
     "nome": "IPTU Salvador",
-    "sigla": "IPTU_SALVADOR",
-    "versao": "1.0",
-    "autor": "Tech Lead - eContabil",
+    "sigla": "PREF_SALVADOR",
+    "versao": "2.0",
+    "autor": "api-sefaz-ssa",
     "dataCriacao": "2026-08-10",
-    "dataUltimaValidacao": "2026-08-10",
+    "dataUltimaValidacao": "2026-10-05",
     "urlOficial": "https://servicosweb.sefaz.salvador.ba.gov.br/WebsiteV2/Sistemas/CertidaoDadosCadastrais/Modulos/Principal/CertidaoDadosCadastraisFrm.aspx",
-    "descricao": "Certidão de dados cadastrais (IPTU) em Salvador"
+    "descricao": "Certidão de dados cadastrais (IPTU) da SEFAZ Salvador por número de inscrição imobiliária"
   },
   "human": {
     "perfil": "normal"
@@ -18,9 +18,80 @@
   },
   "navegacao": {
     "url": "https://servicosweb.sefaz.salvador.ba.gov.br/WebsiteV2/Sistemas/CertidaoDadosCadastrais/Modulos/Principal/CertidaoDadosCadastraisFrm.aspx",
-    "timeout": 60000,
+    "timeout": 30000,
     "waitUntil": "domcontentloaded"
   },
-  "steps": [],
-  "extracao": {}
+  "seletores": {
+    "campo_inscricao": {
+      "descricao": "Campo do número de inscrição imobiliária no formulário",
+      "seletores": [
+        "#ctl00_ContentPlaceHolderPrincipal_txtCdInscricao",
+        "input[placeholder*='Inscrição']",
+        "xpath=//input[contains(@id, 'txtCdInscricao')]"
+      ]
+    },
+    "botao_consultar": {
+      "descricao": "Botão que submete a consulta da certidão",
+      "seletores": [
+        "#ctl00_ContentPlaceHolderPrincipal_BtConsultar",
+        "input[value='Consultar']",
+        "xpath=//input[contains(@id, 'BtConsultar')]"
+      ]
+    },
+    "bloco_resultado": {
+      "descricao": "Sinal de que a certidão de dados cadastrais carregou",
+      "seletores": [
+        "#ctl00_ContentPlaceHolderPrincipal_UCCertidaoDadosCadastrais_LbCdInscricaoImob",
+        "text=CERTIDÃO DE DADOS CADASTRAIS",
+        "xpath=//span[contains(@id, 'LbCdInscricaoImob')]"
+      ]
+    }
+  },
+  "steps": [
+    {
+      "id": "navegar-portal",
+      "descricao": "Abre a página da certidão de dados cadastrais",
+      "acao": "navegar"
+    },
+    {
+      "id": "preencher-inscricao",
+      "descricao": "Preenche o número de inscrição imobiliária",
+      "acao": "preencher",
+      "chaveSeletor": "campo_inscricao"
+    },
+    {
+      "id": "submeter-consulta",
+      "descricao": "Clica em Consultar",
+      "acao": "clicar",
+      "chaveSeletor": "botao_consultar"
+    },
+    {
+      "id": "aguardar-resultado",
+      "descricao": "Aguarda o bloco da certidão carregar",
+      "acao": "esperar",
+      "chaveSeletor": "bloco_resultado"
+    },
+    {
+      "id": "extrair-dados",
+      "descricao": "Extrai a certidão por mapa de identificadores",
+      "acao": "avaliar"
+    },
+    {
+      "id": "gerar-artefatos",
+      "descricao": "Gera print e PDF após a extração",
+      "acao": "capturar-download"
+    }
+  ],
+  "extracao": {
+    "estrategia": "mapa-ids",
+    "descricao": "Mapa sufixo→valor a partir dos identificadores ASP.NET sob o prefixo ctl00_ContentPlaceHolderPrincipal_UCCertidaoDadosCadastrais_; imune a re-layout enquanto os identificadores forem mantidos",
+    "prefixo": "ctl00_ContentPlaceHolderPrincipal_UCCertidaoDadosCadastrais_",
+    "obrigatorio": ["inscricao"]
+  },
+  "artefatos": {
+    "ordem": "apos-extracao",
+    "print": { "formato": "jpeg", "qualidade": 70, "paginaInteira": true },
+    "pdf": { "formato": "A4", "fundo": true }
+  },
+  "captcha": { "exigido": false }
 }
