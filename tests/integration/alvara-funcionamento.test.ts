@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Browser } from 'playwright-core';
@@ -37,6 +38,18 @@ const TEXTO_ALVARA = [
   'LOGRADOURO: RUA DAS FLORES',
   'BAIRRO: CENTRO',
   'CNAE PRINCIPAL: 4712-1/00',
+].join('\n');
+
+const CNPJ_DIVERGENTE_DIGITOS = '11222333000181';
+
+const TEXTO_ALVARA_CNPJ_DIVERGENTE = TEXTO_ALVARA.replace('12.345.678/0001-95', '11.222.333/0001-81');
+
+const TEXTO_ALVARA_SEM_CNPJ = [
+  'NOME FANTASIA: LOJA EXEMPLO',
+  'CGA: 0025676300137',
+  'NATUREZA JURÍDICA: SOCIEDADE EMPRESÁRIA LIMITADA',
+  'SITUAÇÃO CADASTRAL: Ativa Regular',
+  'VALIDADE DO ALVARÁ: 31/12/2026',
 ].join('\n');
 
 const PDF_FIXTURE = [
@@ -363,6 +376,82 @@ describe('robot alvara-funcionamento', () => {
       }
     },
   );
+
+  it('retorna sucesso falso quando o CNPJ do documento diverge do buscado', { timeout: 90000 }, async () => {
+    const { sessao, fechar } = await abrirSessao();
+    registrarExtratorTextoPdf(async () => TEXTO_ALVARA_CNPJ_DIVERGENTE);
+    try {
+      await servirPortal(sessao, formHtml, 'pdf');
+      const resultado = await executarAlvaraFuncionamento(
+        montarExecucao('exe_cnpj_divergente', { cnpj: CNPJ_DIGITOS, inscricaoMunicipal: CGA_DIGITOS }),
+        sessao,
+      );
+      expect(resultado['sucesso']).toBe(false);
+      expect(String(resultado['mensagem'])).toContain(CNPJ_DIVERGENTE_DIGITOS);
+      expect(String(resultado['mensagem'])).toContain(CNPJ_DIGITOS);
+      const dados = resultado['dados'] as Record<string, string>;
+      expect(dados['cnpjBuscado']).toBe(CNPJ_DIGITOS);
+      expect(dados['cnpjEncontrado']).toBe(CNPJ_DIVERGENTE_DIGITOS);
+    } finally {
+      registrarExtratorTextoPdf(async () => TEXTO_ALVARA);
+      await fechar();
+    }
+  });
+
+  it('mantém o gate por razão social quando o CNPJ extraído está vazio', { timeout: 90000 }, async () => {
+    const { sessao, fechar } = await abrirSessao();
+    registrarExtratorTextoPdf(async () => TEXTO_ALVARA_SEM_CNPJ);
+    try {
+      await servirPortal(sessao, formHtml, 'pdf');
+      const resultado = await executarAlvaraFuncionamento(
+        montarExecucao('exe_cnpj_vazio', { cnpj: CNPJ_DIGITOS, inscricaoMunicipal: CGA_DIGITOS }),
+        sessao,
+      );
+      expect(resultado['sucesso']).toBe(false);
+      expect(String(resultado['mensagem'])).toMatch(/Alvará não encontrado/);
+      expect(String(resultado['mensagem'])).not.toContain('refere-se');
+      const dados = resultado['dados'] as Record<string, string>;
+      expect(dados['cnpjBuscado']).toBe(CNPJ_DIGITOS);
+    } finally {
+      registrarExtratorTextoPdf(async () => TEXTO_ALVARA);
+      await fechar();
+    }
+  });
+
+  it('prossegue com sucesso quando a geração de artefatos falha', { timeout: 90000 }, async () => {
+    const { sessao, fechar } = await abrirSessao();
+    const diretorio = path.join(
+      tmpdir(),
+      'api-sefaz-ssa',
+      `alvara-funcionamento-${CNPJ_DIGITOS}-${CGA_DIGITOS}`,
+    );
+    await rm(diretorio, { recursive: true, force: true });
+    await mkdir(path.dirname(diretorio), { recursive: true });
+    await writeFile(diretorio, 'bloqueio');
+    const avisos: Array<string | undefined> = [];
+    const deixar = obterCanalProgresso().observar('exe_artefatos_falham', (evento) => {
+      avisos.push(evento.etapa);
+    });
+    try {
+      await servirPortal(sessao, formHtml, 'pdf');
+      const resultado = await executarAlvaraFuncionamento(
+        montarExecucao('exe_artefatos_falham', {
+          cnpj: CNPJ_DIGITOS,
+          inscricaoMunicipal: CGA_DIGITOS,
+          artefatos: 'ambos',
+        }),
+        sessao,
+      );
+      expect(resultado['sucesso']).toBe(true);
+      const dados = resultado['dados'] as Record<string, string>;
+      expect(dados['razaoSocial']).toBe('EMPRESA EXEMPLO LTDA');
+      expect(avisos.some((etapa) => etapa?.includes('Falha ao gerar artefatos'))).toBe(true);
+    } finally {
+      deixar();
+      await rm(diretorio, { force: true });
+      await fechar();
+    }
+  });
 
   it(
     'falha na extração com etapa rica quando a porta OCR não tem extrator',

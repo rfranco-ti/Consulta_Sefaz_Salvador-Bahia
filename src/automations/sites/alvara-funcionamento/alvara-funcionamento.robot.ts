@@ -4,6 +4,12 @@ import path from 'node:path';
 import type { Download, Locator, Page } from 'playwright-core';
 import { z } from 'zod';
 import { BaseRobot, type ExecucaoCtx, type ResultadoRobot } from '../../base/base-robot.js';
+import {
+  analisarTextoComRotulos,
+  lerErroPortal as lerErroPortalCompartilhado,
+  mensagemDivergenciaCnpj,
+  somenteDigitos,
+} from '../../base/extracao-texto.js';
 import { obterExtratorTextoPdf, type ExtratorTextoPdf } from '../../base/ocr.js';
 import { localizarPorChave, type CadeiaSeletores } from '../../base/seletores.js';
 import type { Execucao } from '../../../database/index.js';
@@ -63,16 +69,6 @@ export interface AlvaraFuncionamentoParams {
 const artefatosEscolhaSchema = z.enum(['nenhum', 'pdf', 'print', 'ambos']);
 
 type ArtefatosEscolha = z.infer<typeof artefatosEscolhaSchema>;
-
-interface ElementoPagina {
-  readonly textContent: string | null;
-}
-
-interface DocumentoPagina {
-  querySelector(seletor: string): ElementoPagina | null;
-}
-
-declare const document: DocumentoPagina;
 
 type ArquivoRegistrado = {
   tipo: Parameters<ExecucaoCtx['registrarArquivo']>[0];
@@ -171,14 +167,6 @@ function mensagemDeErro(erro: unknown): string {
   return erro instanceof Error ? erro.message : String(erro);
 }
 
-function semAcento(valor: string): string {
-  return valor.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
-
-function somenteDigitos(valor: string): string {
-  return valor.replace(/\D/g, '');
-}
-
 function validarEntrada(params: Record<string, unknown>): AlvaraFuncionamentoParams {
   const base = baseAlvaraSchema.safeParse(params);
   if (!base.success) {
@@ -212,21 +200,7 @@ function validarEntrada(params: Record<string, unknown>): AlvaraFuncionamentoPar
 }
 
 export function analisarTextoAlvara(texto: string): Record<string, string> {
-  const campos: Record<string, string> = {};
-  const rotulos = new Map<string, string>(ROTULOS_ALVARA);
-  for (const linha of texto.split(/\r?\n/)) {
-    const corte = linha.indexOf(':');
-    if (corte <= 0) {
-      continue;
-    }
-    const rotulo = semAcento(linha.slice(0, corte).toLowerCase().replace(/\s+/g, ' ').trim());
-    const chave = rotulos.get(rotulo);
-    if (chave === undefined || campos[chave] !== undefined) {
-      continue;
-    }
-    campos[chave] = linha.slice(corte + 1).replace(/\s+/g, ' ').trim();
-  }
-  return campos;
+  return analisarTextoComRotulos(texto, ROTULOS_ALVARA);
 }
 
 function normalizarDados(
@@ -309,6 +283,18 @@ export class AlvaraFuncionamentoRobot extends BaseRobot {
       }
       const texto = await this.extrairTextoPdf(saidaPdf.caminhoPdf, ctx);
       const dados = normalizarDados(entrada.cnpj, entrada.inscricaoMunicipal, analisarTextoAlvara(texto));
+      const cnpjEncontrado = somenteDigitos(dados['cnpj'] ?? '');
+      if (cnpjEncontrado !== '' && cnpjEncontrado !== somenteDigitos(entrada.cnpj)) {
+        return {
+          sucesso: false,
+          dados: {
+            cnpjBuscado: entrada.cnpj,
+            inscricaoMunicipalBuscada: entrada.inscricaoMunicipal,
+            cnpjEncontrado,
+          },
+          mensagem: mensagemDivergenciaCnpj(cnpjEncontrado, somenteDigitos(entrada.cnpj)),
+        };
+      }
       await this.gerarArtefatos(pagina, ctx, entrada.cnpj, entrada.inscricaoMunicipal, saidaPdf.caminhoPdf);
       if (dados['razaoSocial'] === '') {
         return {
@@ -493,22 +479,7 @@ export class AlvaraFuncionamentoRobot extends BaseRobot {
     pagina: Page,
     cadeias: Record<string, CadeiaSeletores>,
   ): Promise<string> {
-    const candidatos = cadeias['mensagem_erro']?.seletores ?? [];
-    const consultas = candidatos.filter((s) => !s.startsWith('xpath=') && !s.startsWith('text='));
-    if (consultas.length === 0) {
-      return '';
-    }
-    const combinado = consultas.join(', ');
-    const texto = await pagina.waitForFunction(
-      (seletor: string): string | null => {
-        const elemento = document.querySelector(seletor);
-        const conteudo = (elemento?.textContent ?? '').replace(/\s+/g, ' ').trim();
-        return conteudo !== '' ? conteudo : null;
-      },
-      combinado,
-      { timeout: TIMEOUT_DOWNLOAD_MS },
-    );
-    return String(texto ?? '').trim();
+    return lerErroPortalCompartilhado(pagina, cadeias, TIMEOUT_DOWNLOAD_MS);
   }
 
   private async extrairTextoPdf(caminhoPdf: string, ctx: ExecucaoCtx): Promise<string> {
@@ -529,12 +500,12 @@ export class AlvaraFuncionamentoRobot extends BaseRobot {
     inscricaoMunicipal: string,
     caminhoPdf: string,
   ): Promise<void> {
-    exigirTempo(ctx.signal, 'gerar-artefatos');
-    if (ctx.artefatos === 'nenhum') {
-      return;
-    }
-    this.emitir(ctx, 'log', 'Gerando os artefatos da consulta');
     try {
+      exigirTempo(ctx.signal, 'gerar-artefatos');
+      if (ctx.artefatos === 'nenhum') {
+        return;
+      }
+      this.emitir(ctx, 'log', 'Gerando os artefatos da consulta');
       const diretorio = path.join(tmpdir(), 'api-sefaz-ssa', `alvara-funcionamento-${cnpj}-${inscricaoMunicipal}`);
       await mkdir(diretorio, { recursive: true });
       if (ctx.artefatos === 'print' || ctx.artefatos === 'ambos') {
@@ -549,7 +520,7 @@ export class AlvaraFuncionamentoRobot extends BaseRobot {
         ctx.registrarArquivo('pdf_oficial', caminhoOficial, 'application/pdf');
       }
     } catch (erro) {
-      throw normalizarErro('gerar-artefatos', erro);
+      this.emitir(ctx, 'warn', `Falha ao gerar artefatos: ${mensagemDeErro(erro)} — seguindo sem artefatos.`);
     }
   }
 }
