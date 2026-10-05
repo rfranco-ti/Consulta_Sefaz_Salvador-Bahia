@@ -20,8 +20,7 @@ const PADRAO: Record<TipoAutomacao, CacheConfig> = {
   'ficha-cadastral': { ttlMs: 7 * DIA, forceRefreshDefault: false },
   'alvara-funcionamento': { ttlMs: 7 * DIA, forceRefreshDefault: false },
   'cadin-salvador': { ttlMs: 3 * DIA, forceRefreshDefault: false },
-  'dam-tff-tll': { ttlMs: 12 * HORA, forceRefreshDefault: true },
-  'dam-tll': { ttlMs: 12 * HORA, forceRefreshDefault: true },
+  'dam-tff-tll': { ttlMs: 12 * HORA, forceRefreshDefault: false },
 };
 
 export function parseDuracao(valor: string): number {

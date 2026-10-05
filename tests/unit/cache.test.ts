@@ -2,10 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { cacheConfig, parseDuracao } from '../../src/config/cache.js';
 
 describe('configuracao de cache', () => {
-  it('DAM tem TTL de 12h e forceRefresh por padrao', () => {
+  it('DAM tem TTL de 12h e forceRefresh desligado por padrao', () => {
     expect(cacheConfig('dam-tff-tll').ttlMs).toBe(12 * 60 * 60 * 1000);
-    expect(cacheConfig('dam-tff-tll').forceRefreshDefault).toBe(true);
-    expect(cacheConfig('dam-tll').forceRefreshDefault).toBe(true);
+    expect(cacheConfig('dam-tff-tll').forceRefreshDefault).toBe(false);
   });
 
   it('consultas cadastrais usam 7 dias', () => {

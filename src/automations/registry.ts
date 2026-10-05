@@ -8,7 +8,6 @@ export const TIPOS_AUTOMACAO = [
   'alvara-funcionamento',
   'cadin-salvador',
   'dam-tff-tll',
-  'dam-tll',
 ] as const;
 
 export type TipoAutomacao = (typeof TIPOS_AUTOMACAO)[number];
@@ -27,7 +26,6 @@ export const PORTAL_DO_TIPO: Record<TipoAutomacao, string> = {
   'alvara-funcionamento': 'PREF_SALVADOR',
   'cadin-salvador': 'PREF_SALVADOR',
   'dam-tff-tll': 'PREF_SALVADOR',
-  'dam-tll': 'PREF_SALVADOR',
 };
 
 export interface AutomacaoRegistro {
