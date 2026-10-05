@@ -1,5 +1,7 @@
 import type { TipoAutomacao } from '../../automations/registry.js';
 
+export type ExecucaoStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
+
 export type ArtefatosOpcao = 'nenhum' | 'pdf' | 'print' | 'ambos';
 
 export interface DocumentoInfo {
@@ -42,4 +44,16 @@ export interface IniciarExecucaoInput {
   forceRefresh: boolean;
   apiKeyId: string;
   idempotencyKey?: string;
+}
+
+export interface ConsultarComCacheInput<T> {
+  tipo: TipoAutomacao;
+  payload: unknown;
+  forceRefresh?: boolean;
+  executar: () => Promise<T>;
+}
+
+export interface ConsultarComCacheSaida<T> {
+  resultado: T;
+  cache: CacheInfo;
 }
