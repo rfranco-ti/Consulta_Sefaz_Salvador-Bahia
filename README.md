@@ -1,59 +1,60 @@
-# api-sefaz-ssa
+# Consulta SEFAZ SSA/BA
 
-API HTTP para consultas automatizadas em portais da SEFAZ Bahia e da Prefeitura de Salvador. A automacao roda em um navegador headless controlado por Playwright, no servidor, e devolve os dados estruturados em JSON — com opcao de retornar tambem o PDF ou o print da pagina.
+API REST para consultas automatizadas em portais da SEFAZ Bahia e da SEFAZ Salvador. A automação roda em um navegador headless controlado por Playwright, no servidor, e devolve os dados estruturados em JSON — com opção de retornar também o PDF ou o print da página.
 
-Projetada para uso interno de uma equipe pequena (ate 10 usuarios simultaneos), em servidor simples, com consumo controlado de recursos.
+Projetada para uso interno de uma equipe pequena (até 10 usuários simultâneos), em servidor simples, com consumo controlado de recursos.
 
 ## Origem
 
-As consultas aos portais da SEFAZ Bahia e da Prefeitura de Salvador eram feitas manualmente, uma a uma. Para acelerar, foi criada uma suite de automacoes em Python que rodava localmente na maquina de cada usuario: o processo ficou mais rapido, mas o navegador headless consumia CPU e memoria da propria estacao de trabalho, deixando o computador inoperante durante a execucao.
+As consultas aos portais da SEFAZ Bahia e da SEFAZ Salvador eram feitas manualmente, uma a uma. Para acelerar, foi criada uma suíte de automações em Python que rodava localmente na máquina de cada usuário: o processo ficou mais rápido, mas o navegador headless consumia CPU e memória da própria estação de trabalho, deixando o computador inoperante durante a execução.
 
-Este projeto e a reescrita desse modelo como API. A automacao roda em um servidor (local ou em nuvem); as maquinas dos usuarios apenas enviam a requisicao HTTP e recebem o resultado. O custo do navegador passa a ser do servidor, concentrado em um pool de browser reutilizado, com limite de concorrencia e cache de resultados.
+Este projeto é a reescrita desse modelo como API. A automação roda em um servidor (local ou em nuvem); as máquinas dos usuários apenas enviam a requisição HTTP e recebem o resultado. O custo do navegador passa a ser do servidor, concentrado em um pool de browser reutilizado, com limite de concorrência e cache de resultados.
 
-Mantivemos o mesmo proposito tecnico da suite Python, com o runtime corrigido:
+Mantivemos o mesmo propósito técnico da suíte Python, com o runtime corrigido:
 
-- eliminar a dependencia de maquina local dedicada (a consulta roda no servidor);
-- concentrar o custo de navegador num pool com contexto isolado por execucao;
-- fila FIFO persistida e limite de concorrencia por portal, para nao martelar os portais;
-- cache de resultados com TTL por tipo de consulta (evita reexecucao desnecessaria);
-- historico, auditoria e controle de acesso centralizados (SQLite + API key por colaborador).
+- eliminar a dependência de máquina local dedicada (a consulta roda no servidor);
+- concentrar o custo de navegador num pool com contexto isolado por execução;
+- fila FIFO persistida e limite de concorrência por portal, para não martelar os portais;
+- cache de resultados com TTL por tipo de consulta (evita reexecução desnecessária);
+- histórico, auditoria e controle de acesso centralizados (SQLite + API key por colaborador).
 
 ## Escopo
 
-Somente consultas aos portais da SEFAZ Bahia e da Prefeitura de Salvador:
+Somente consultas aos portais da SEFAZ Bahia e da SEFAZ Salvador:
 
-| Automaacao | Portal | Entrada principal |
+| Automação | Portal | Entrada principal |
 |---|---|---|
 | `sefaz-bahia` | SEFAZ Bahia | CNPJ |
-| `sefaz-bahia-inscricao` | SEFAZ Bahia | Inscricao Estadual |
-| `sefaz-bahia-socio` | SEFAZ Bahia | CPF do socio |
-| `consulta-inscricoes` | SEFAZ Bahia + Prefeitura | CNPJ (IE + IM) |
-| `iptu-salvador` | Prefeitura de Salvador | Numero do IPTU |
-| `ficha-cadastral` | Prefeitura de Salvador | CNPJ |
-| `alvara-funcionamento` | Prefeitura de Salvador | CNPJ / inscricao municipal |
-| `cadin-salvador` | Prefeitura de Salvador | CPF ou CNPJ |
-| `dam-tff-tll` | Prefeitura de Salvador | Inscricao municipal + exercicio |
-| `dam-tll` | Prefeitura de Salvador | CGA + exercicio |
+| `sefaz-bahia-inscricao` | SEFAZ Bahia | Inscrição Estadual |
+| `sefaz-bahia-socio` | SEFAZ Bahia | CPF do sócio |
+| `consulta-inscricoes` | SEFAZ Bahia + SEFAZ Salvador | CNPJ (IE + IM) |
+| `iptu-salvador` | SEFAZ Salvador | Número do IPTU |
+| `ficha-cadastral` | SEFAZ Salvador | CNPJ |
+| `alvara-funcionamento` | SEFAZ Salvador | CNPJ / inscrição municipal |
+| `cadin-salvador` | SEFAZ Salvador | CPF ou CNPJ |
+| `dam-tff-tll` | SEFAZ Salvador | Inscrição municipal (CGA) + exercício |
 
-Nao faz: login em outros sistemas, escrita em portais, envio de documentos, ou qualquer operacao que altere dados.
+Não faz: login em outros sistemas, escrita em portais, envio de documentos, ou qualquer operação que altere dados.
 
 ## Como funciona
 
-1. O cliente envia uma requisicao POST com os parametros da consulta.
-2. A API valida, cria uma execucao e responde imediatamente com o ID (padrao assincrono).
-3. Um worker interno executa a automacao no navegador, na ordem de chegada (FIFO), respeitando limite de concorrencia por global e por portal.
+1. O cliente envia uma requisição (GET com parâmetros na URL, ou POST com JSON).
+2. A API valida, consulta o cache e, em caso de miss, cria uma execução.
+3. Um worker interno executa a automação no navegador, na ordem de chegada (FIFO), respeitando limite de concorrência global e por portal.
 4. O cliente acompanha por polling ou por SSE, e ao final recebe os dados e os links dos documentos (PDF/print).
-5. O resultado fica em cache por um periodo configuravel por tipo de consulta.
+5. O resultado fica em cache por um período configurável por tipo de consulta.
 
-Autenticacao por API key: cada usuario possui a propria chave (header `X-API-Key`). Chaves sao gerenciadas por uma chave administrativa.
+Autenticação por API key: cada usuário possui a própria chave, enviada no header `X-API-Key` ou na query `?apikey=`. Chaves são gerenciadas por uma chave administrativa.
+
+Documentação interativa em **`/docs`** (Swagger UI), gerada a partir dos schemas de validação.
 
 ## Requisitos
 
 - Node.js 20 ou superior
 - npm
-- Linux ou macOS (o Playwright precisa de algumas bibliotecas de sistema no Linux)
+- Linux ou macOS (no Linux, o Playwright precisa de algumas bibliotecas de sistema)
 
-## Instalacao
+## Instalação
 
 ```bash
 npm install
@@ -62,10 +63,9 @@ cp .env.example .env
 # edite .env: defina ADMIN_KEY e gere ENCRYPTION_KEY
 ```
 
-`npm run browser:install` baixa apenas o `chromium-headless-shell` (binario minimo de
-headless, ~90 MB — sem Firefox, sem WebKit, sem Chromium completo).
+`npm run browser:install` baixa apenas o `chromium-headless-shell` (binário mínimo de headless, ~90 MB — sem Firefox, sem WebKit, sem Chromium completo).
 
-Em Linux pode ser necessario instalar as bibliotecas de sistema uma unica vez:
+No Linux pode ser necessário instalar as bibliotecas de sistema uma única vez:
 
 ```bash
 npx playwright-core install-deps chromium
@@ -77,47 +77,76 @@ Gerar a `ENCRYPTION_KEY`:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-## Build e execucao
+## Build e execução
 
 ```bash
-npm run typecheck   # verificacao de tipos
+npm run typecheck   # verificação de tipos
 npm test            # testes
 npm run build       # compila para dist/
-npm start           # producao (dist/)
+npm start           # produção (dist/)
 npm run dev         # desenvolvimento com reload
 ```
 
 A API sobe em `http://localhost:3000` (configure `PORT` no `.env`).
 
-## Configuracao
+### Saúde do serviço
 
-Todas as variaveis estao descritas em `.env.example`. As mais relevantes:
+```bash
+curl http://localhost:3000/health   # {"status":"ok"} — processo vivo
+curl http://localhost:3000/ready    # prontidão (banco, browser)
+curl http://localhost:3000/metrics  # métricas básicas
+```
 
-| Variavel | Descricao | Padrao |
+## Configuração
+
+Todas as variáveis estão descritas em `.env.example`. As mais relevantes:
+
+| Variável | Descrição | Padrão |
 |---|---|---|
-| `ADMIN_KEY` | Chave para gerenciar API keys | obrigatoria |
-| `ENCRYPTION_KEY` | Criptografia das sessoes de navegador | obrigatoria |
-| `SEMAFORO_GLOBAL` | Automacoes simultaneas no servidor | `5` |
+| `ADMIN_KEY` | Chave para gerenciar API keys | obrigatória |
+| `ENCRYPTION_KEY` | Criptografia das sessões de navegador | obrigatória |
+| `SEMAFORO_GLOBAL` | Automações simultâneas no servidor | `5` |
 | `SEMAFORO_POR_PORTAL` | Simultaneidades por portal | `1` |
-| `FILA_TIMEOUT_SEG` | Tempo maximo de espera na fila | `90` |
-| `CACHE_<TIPO>` | TTL do cache por automacao (`7d`, `12h`, `45m`) | ver abaixo |
+| `FILA_TIMEOUT_SEG` | Tempo máximo de espera na fila | `90` |
+| `CACHE_<TIPO>` | TTL do cache por automação (`7d`, `12h`, `45m`) | ver abaixo |
 
-TTLs padrao de cache: 7 dias para a maioria das consultas, 3 dias para CADIN, 12 horas para DAM (com reexecucao forcada por padrao). Erros nunca entram em cache.
+### Valores de cache
+
+TTLs padrão: **7 dias** para a maioria das consultas, **3 dias** para CADIN, **12 horas** para DAM. Erros nunca entram em cache. O parâmetro `forceRefresh` é **opcional e desligado por padrão** — quando enviado, pula o cache e regrava o resultado.
+
+Todos os valores podem ser alterados:
+
+1. **Sem mexer em código** — crie ou edite o `.env` e reinicie o serviço. O formato aceito é `30s`, `45m`, `12h`, `7d`:
+
+   ```bash
+   CACHE_SEFAZ_BAHIA=14d
+   CACHE_DAM_TFF_TLL=24h
+   CACHE_CADIN_SALVADOR=7d
+   ```
+
+2. **Em código** — ajuste o padrão em `src/config/cache.ts`.
 
 ## Uso
 
-Todas as rotas exigem o header `X-API-Key`.
+A API aceita autenticação de duas formas em qualquer rota:
 
-### Criar uma API key (admin)
+- header `X-API-Key: $CHAVE` (recomendado para servidores)
+- query `?apikey=$CHAVE` (conveniente para testar no navegador)
+
+### Consultar pela URL (GET)
+
+Mais simples para uso direto no navegador ou com `curl`:
 
 ```bash
-curl -X POST http://localhost:3000/v1/admin/apikeys \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $ADMIN_KEY" \
-  -d '{"nome": "Maria"}'
+curl "http://localhost:3000/v1/consultas/sefaz-bahia?apikey=$USER_KEY&cnpj=12345678000190"
 ```
 
-### Executar uma consulta (assincrono, padrao)
+- responde `200` com o resultado (usa o cache; em caso de miss, executa a consulta de verdade)
+- aceita `&artefatos=pdf|print|ambos`, `&forceRefresh=true`, `&wait=30`
+
+> Observação de segurança: a query string aparece em logs e no histórico do navegador. Para uso em produção prefira o header.
+
+### Executar de forma assíncrona (POST, padrão)
 
 ```bash
 curl -X POST http://localhost:3000/v1/automacoes/sefaz-bahia \
@@ -137,6 +166,15 @@ Resposta (202):
   "status": "PENDING",
   "posicaoFila": 2
 }
+```
+
+### Criar uma API key (admin)
+
+```bash
+curl -X POST http://localhost:3000/v1/admin/apikeys \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $ADMIN_KEY" \
+  -d '{"nome": "Maria"}'
 ```
 
 ### Consultar o resultado
@@ -162,18 +200,22 @@ curl -OJ http://localhost:3000/v1/documentos/doc_01H... \
   -H "X-API-Key: $USER_KEY"
 ```
 
-### Parametro de artefatos
+### Documentação interativa (Swagger)
+
+Abra **`http://localhost:3000/docs`** no navegador: todas as rotas, parâmetros e exemplos, com botão "Try it out" para executar de verdade.
+
+### Parâmetro de artefatos
 
 | Valor | Entrega |
 |---|---|
-| `nenhum` (padrao) | apenas os dados em JSON |
-| `pdf` | PDF da pagina ou PDF oficial do portal |
-| `print` | imagem da pagina (JPEG) |
+| `nenhum` (padrão) | apenas os dados em JSON |
+| `pdf` | PDF da página ou PDF oficial do portal |
+| `print` | imagem da página (JPEG) |
 | `ambos` | PDF e print |
 
-Com `artefatos`, os documentos ficam disponiveis em `GET /v1/documentos/:id` durante o TTL configurado.
+Com `artefatos`, os documentos ficam disponíveis em `GET /v1/documentos/:id` durante o TTL configurado.
 
-### Resposta sincrona (opcional)
+### Resposta síncrona (opcional)
 
 ```bash
 curl -X POST "http://localhost:3000/v1/automacoes/sefaz-bahia?wait=30" \
@@ -182,50 +224,52 @@ curl -X POST "http://localhost:3000/v1/automacoes/sefaz-bahia?wait=30" \
   -d '{"cnpj": "12345678000190"}'
 ```
 
-Espera ate 30 segundos e devolve o resultado pronto; se a execucao demorar, responde 202 com o ID normalmente.
+Espera até 30 segundos e devolve o resultado pronto; se a execução demorar, responde 202 com o ID normalmente.
 
 ## Endpoints
 
-| Metodo | Rota | Descricao |
+| Método | Rota | Descrição |
 |---|---|---|
-| POST | `/v1/automacoes/:tipo` | Executa uma consulta |
+| GET | `/v1/consultas/:tipo` | Consulta direta pela URL (cache-first) |
+| POST | `/v1/automacoes/:tipo` | Executa uma consulta (assíncrono) |
 | GET | `/v1/execucoes/:id` | Status e resultado |
 | GET | `/v1/execucoes/:id/progresso` | Progresso em SSE |
-| GET | `/v1/execucoes/:id/documentos` | Lista de documentos da execucao |
+| GET | `/v1/execucoes/:id/documentos` | Lista de documentos da execução |
 | GET | `/v1/documentos/:id` | Download do documento |
 | POST | `/v1/admin/apikeys` | Cria API key (admin) |
 | GET | `/v1/admin/apikeys` | Lista API keys (admin) |
 | DELETE | `/v1/admin/apikeys/:id` | Revoga API key (admin) |
+| GET | `/docs` | Swagger UI (OpenAPI) |
 | GET | `/health` | Liveness |
-| GET | `/ready` | Readiness (browser saudavel) |
-| GET | `/metrics` | Metricas basicas |
+| GET | `/ready` | Readiness (banco e browser saudáveis) |
+| GET | `/metrics` | Métricas básicas |
 
 ## Estrutura do projeto
 
 ```
 src/
-  app/          aplicacao Fastify (server, plugins)
+  app/          aplicação Fastify (server, plugins)
   config/       env, constantes, TTLs de cache
   modules/
     automation/ controller, service, repository, cache das consultas
-    jobs/       fila, worker, estados das execucoes
+    jobs/       fila, worker, estados das execuções
     browser/    pool de navegadores, contexto, factory
   automations/
-    base/       base dos robos, artefatos, captcha, ocr
-    sites/      um diretorio por portal
-    registry.ts registro das automacoes
+    base/       base dos robôs, artefatos, captcha, ocr
+    sites/      um diretório por portal
+    registry.ts registro das automações
   database/     cliente SQLite, migrations, repositories
-  shared/       logger, erros, utilitarios, tipos
+  shared/       logger, erros, utilitários, tipos
 tests/          unit, integration, e2e
 storage/        screenshots, traces, downloads, artefatos
 data/           banco SQLite
 ```
 
-## Notas de operacao
+## Notas de operação
 
-- A automacao usa `chromium-headless-shell` (modo headless, binario minimo). O navegador e lancado uma vez e reutilizado; cada execucao recebe um contexto isolado. O pool e reciclado periodicamente para manter o consumo de memoria estavel.
-- Execucoes do mesmo portal rodam uma por vez (fila FIFO); portais diferentes rodam em paralelo.
-- Consultas identicas em andamento sao agrupadas (uma unica execucao serve varios pedidos).
-- Captcha e OCR sao resolvidos localmente (Tesseract), sem servicos externos de IA.
-- Imagens e fontes dos portais sao bloqueadas por padrao para reduzir consumo; quando a consulta pede PDF/print, os recursos visuais sao liberados.
-- O banco (`data/app.sqlite`) e a pasta `storage/` devem ser incluidos em backup junto com o `.env`.
+- A automação usa `chromium-headless-shell` (modo headless, binário mínimo). O navegador é lançado uma vez e reutilizado; cada execução recebe um contexto isolado. O pool é reciclado periodicamente para manter o consumo de memória estável.
+- Execuções do mesmo portal rodam uma por vez (fila FIFO); portais diferentes rodam em paralelo.
+- Consultas idênticas em andamento são agrupadas (uma única execução serve vários pedidos).
+- Captcha e OCR são resolvidos localmente (Tesseract), sem serviços externos de IA.
+- Imagens e fontes dos portais são bloqueadas por padrão para reduzir consumo; quando a consulta pede PDF/print, os recursos visuais são liberados.
+- O banco (`data/app.sqlite`) e a pasta `storage/` devem ser incluídos em backup junto com o `.env`.
