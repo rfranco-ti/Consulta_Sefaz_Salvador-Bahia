@@ -1,0 +1,39 @@
+# Dependencias e build
+node_modules/
+dist/
+
+# Ambiente
+.env
+.env.local
+
+# Dados locais
+/data/*
+!/data/.gitkeep
+
+# Artefatos de execucao (screenshots, PDFs, traces, downloads)
+/storage/screenshots/*
+!/storage/screenshots/.gitkeep
+/storage/traces/*
+!/storage/traces/.gitkeep
+/storage/downloads/*
+!/storage/downloads/.gitkeep
+/storage/artifacts/*
+!/storage/artifacts/.gitkeep
+
+# Sessoes de navegador (storageState)
+/profiles/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Pastas ocultas de trabalho do agente (nao vai para o GitHub)
+/.ai/
+/.docs/
+
+# Editor / SO
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
