@@ -76,6 +76,7 @@ describe('migrations', () => {
         'iniciado_em',
         'finalizado_em',
         'duracao_ms',
+        'idempotency_key',
       ]);
       expect(colunasDe(banco, 'execucoes_participantes')).toEqual(['execucao_id', 'api_key_id']);
       expect(colunasDe(banco, 'documentos')).toEqual([
@@ -115,7 +116,9 @@ describe('migrations', () => {
       expect(linhas.map((linha) => linha.name)).toEqual([
         'idx_cache_expira_em',
         'idx_cache_tipo',
+        'idx_execucoes_chave_status',
         'idx_execucoes_criado_em',
+        'idx_execucoes_idempotencia',
         'idx_execucoes_status_ticket',
         'idx_execucoes_tipo_status',
       ]);
@@ -127,7 +130,10 @@ describe('migrations', () => {
   it('registra a migração aplicada na tabela de controle', () => {
     const { banco, limpar } = criarBancoTemporario();
     try {
-      expect(listarMigrationsAplicadas(banco)).toEqual(['001-schema-inicial']);
+      expect(listarMigrationsAplicadas(banco)).toEqual([
+        '001-schema-inicial',
+        '002-idempotency-key',
+      ]);
     } finally {
       limpar();
     }
@@ -140,7 +146,10 @@ describe('migrations', () => {
       const novas = aplicarMigrations(banco);
       expect(novas).toEqual([]);
       expect(esquemaOrdenado(banco)).toBe(antes);
-      expect(listarMigrationsAplicadas(banco)).toEqual(['001-schema-inicial']);
+      expect(listarMigrationsAplicadas(banco)).toEqual([
+        '001-schema-inicial',
+        '002-idempotency-key',
+      ]);
     } finally {
       limpar();
     }
@@ -172,7 +181,10 @@ describe('migrations', () => {
     try {
       const outro = openDatabase(join(diretorio, 'sub', 'dir', 'teste.sqlite'));
       try {
-        expect(aplicarMigrations(outro)).toEqual(['001-schema-inicial']);
+        expect(aplicarMigrations(outro)).toEqual([
+          '001-schema-inicial',
+          '002-idempotency-key',
+        ]);
         expect(nomesTabelas(outro)).toContain('execucoes');
       } finally {
         outro.close();

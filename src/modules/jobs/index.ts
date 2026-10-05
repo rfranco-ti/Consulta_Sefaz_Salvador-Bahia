@@ -1,5 +1,6 @@
 export type {
   EventoProgresso,
+  DepsExecutor,
   Executor,
   ExecucaoStatus,
   JobFila,

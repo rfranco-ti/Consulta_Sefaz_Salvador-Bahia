@@ -17,6 +17,8 @@
     "browser:install": "playwright-core install chromium-headless-shell"
   },
   "dependencies": {
+    "@fastify/swagger": "^9.9.1",
+    "@fastify/swagger-ui": "^6.1.1",
     "better-sqlite3": "^12.2.0",
     "fastify": "^5.6.0",
     "pino": "^9.13.0",

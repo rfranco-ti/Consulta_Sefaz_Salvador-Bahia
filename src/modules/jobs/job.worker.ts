@@ -16,9 +16,10 @@ import {
 } from '../../shared/errors/index.js';
 import { logger as loggerPadrao } from '../../shared/logger/index.js';
 import { obterBrowserService } from '../browser/browser.service.js';
-import type { BrowserSession } from '../browser/browser.types.js';
+import type { BrowserSession, LiberarOptions } from '../browser/browser.types.js';
 import { obterExecutor } from './executor.js';
 import type {
+  DepsExecutor,
   ExecucaoStatus,
   JobWorker,
   OpcoesWorker,
@@ -278,7 +279,11 @@ export class WorkerFila implements JobWorker {
         return this.falhar(execucao.id, tipado, inicio);
       }
       try {
-        const resultado = await executor({ ...execucao, attempts: tentativa }, sessao);
+        const resultado = await executor(
+          { ...execucao, attempts: tentativa },
+          sessao,
+          this.depsExecucao(),
+        );
         if (this.canceladas.has(execucao.id)) {
           return this.falharCancelada(execucao.id, inicio);
         }
@@ -364,6 +369,34 @@ export class WorkerFila implements JobWorker {
     } catch (erro) {
       this.logger.error({ err: erro }, 'Falha na varredura de tempo limite da fila');
     }
+  }
+
+  private depsExecucao(): DepsExecutor {
+    return {
+      criarSessao: async (portal: string): Promise<BrowserSession> => {
+        const liberarSemaforo = await this.semaforo.adquirir(portal, this.timeoutSemaforoMs);
+        let sessao: BrowserSession;
+        try {
+          sessao = await this.criarSessao(portal);
+        } catch (erro) {
+          liberarSemaforo();
+          throw erro;
+        }
+        const liberarOriginal = sessao.liberar.bind(sessao);
+        return {
+          browser: sessao.browser,
+          context: sessao.context,
+          page: sessao.page,
+          liberar: async (opcoes?: LiberarOptions): Promise<void> => {
+            try {
+              await liberarOriginal(opcoes);
+            } finally {
+              liberarSemaforo();
+            }
+          },
+        };
+      },
+    };
   }
 
   private async liberarSessao(sessao: BrowserSession, execucaoId: string): Promise<void> {

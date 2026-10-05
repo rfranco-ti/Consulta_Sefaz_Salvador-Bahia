@@ -1,14 +1,20 @@
 import { z } from 'zod';
-import type { TipoAutomacao } from '../../../automations/registry.js';
+import { PORTAL_DO_TIPO, type TipoAutomacao } from '../../../automations/registry.js';
 import type { Execucao } from '../../../database/index.js';
 import type { BrowserSession } from '../../../modules/browser/browser.types.js';
 import {
   obterCanalProgresso,
   obterExecutor,
   registrarExecutor,
+  type DepsExecutor,
   type ResultadoExecutor,
 } from '../../../modules/jobs/index.js';
-import { EtapaError, TimeoutError, ValidationError } from '../../../shared/errors/index.js';
+import {
+  EtapaError,
+  InternalError,
+  TimeoutError,
+  ValidationError,
+} from '../../../shared/errors/index.js';
 
 export const CONSULTA_INSCRICOES_TIMEOUT_MS = 180000;
 
@@ -96,6 +102,17 @@ async function comTimeout<T>(promessa: Promise<T>, ms: number, etapa: string): P
   }
 }
 
+function exigirFabrica(deps: DepsExecutor | undefined): DepsExecutor {
+  if (deps?.criarSessao === undefined) {
+    throw new InternalError('Consulta de inscrições exige fábrica de sessões por portal');
+  }
+  return deps;
+}
+
+async function encerrarSessoes(sessoes: BrowserSession[]): Promise<void> {
+  await Promise.allSettled(sessoes.map((sessao) => sessao.liberar()));
+}
+
 async function consultarSubEtapa(
   sub: SubEtapa,
   execucao: Execucao,
@@ -158,28 +175,53 @@ function agregarArtefatos(
 
 export const executarConsultaInscricoes = async (
   execucao: Execucao,
-  sessao: BrowserSession,
+  _sessao: BrowserSession,
+  deps?: DepsExecutor,
 ): Promise<ResultadoExecutor> => {
   const { cnpj, artefatos } = validarPayload(execucao.payload);
+  const fabrica = exigirFabrica(deps);
   publicar(execucao.id, execucao.attempts, `Iniciando consulta de inscrições para o CNPJ ${cnpj}`);
-  const promessaEstadual = consultarSubEtapa(ETAPA_ESTADUAL, execucao, sessao, cnpj, artefatos);
-  const promessaMunicipal = consultarSubEtapa(ETAPA_MUNICIPAL, execucao, sessao, cnpj, artefatos);
-  const acompanhar = async (
-    sub: SubEtapa,
-    promessa: Promise<ResultadoExecutor>,
-  ): Promise<ResultadoExecutor> => {
-    const resultado = await promessa;
-    publicar(execucao.id, execucao.attempts, `${sub.rotulo}: resposta recebida`);
-    return resultado;
-  };
-  const [estadual, municipal] = await comTimeout(
-    Promise.all([
-      acompanhar(ETAPA_ESTADUAL, promessaEstadual),
-      acompanhar(ETAPA_MUNICIPAL, promessaMunicipal),
-    ]),
-    CONSULTA_INSCRICOES_TIMEOUT_MS,
-    'consulta-inscricoes',
-  );
+  const sessoes: BrowserSession[] = [];
+  try {
+    const sessaoEstadual = await fabrica.criarSessao(PORTAL_DO_TIPO[ETAPA_ESTADUAL.tipo]);
+    sessoes.push(sessaoEstadual);
+    const sessaoMunicipal = await fabrica.criarSessao(PORTAL_DO_TIPO[ETAPA_MUNICIPAL.tipo]);
+    sessoes.push(sessaoMunicipal);
+    const acompanhar = async (
+      sub: SubEtapa,
+      promessa: Promise<ResultadoExecutor>,
+    ): Promise<ResultadoExecutor> => {
+      const resultado = await promessa;
+      publicar(execucao.id, execucao.attempts, `${sub.rotulo}: resposta recebida`);
+      return resultado;
+    };
+    const [estadual, municipal] = await comTimeout(
+      Promise.all([
+        acompanhar(
+          ETAPA_ESTADUAL,
+          consultarSubEtapa(ETAPA_ESTADUAL, execucao, sessaoEstadual, cnpj, artefatos),
+        ),
+        acompanhar(
+          ETAPA_MUNICIPAL,
+          consultarSubEtapa(ETAPA_MUNICIPAL, execucao, sessaoMunicipal, cnpj, artefatos),
+        ),
+      ]),
+      CONSULTA_INSCRICOES_TIMEOUT_MS,
+      'consulta-inscricoes',
+    );
+    return comporResultado(execucao, cnpj, artefatos, estadual, municipal);
+  } finally {
+    await encerrarSessoes(sessoes);
+  }
+};
+
+function comporResultado(
+  execucao: Execucao,
+  cnpj: string,
+  artefatos: ArtefatosEscolha,
+  estadual: ResultadoExecutor,
+  municipal: ResultadoExecutor,
+): ResultadoExecutor {
   const dados: Record<string, unknown> = { cnpj };
   const pendencias: string[] = [];
   if (estadual['sucesso'] === true) {
@@ -250,6 +292,6 @@ export const executarConsultaInscricoes = async (
   }
   publicar(execucao.id, execucao.attempts, 'Consulta de inscrições concluída');
   return saida;
-};
+}
 
 registrarExecutor('consulta-inscricoes', executarConsultaInscricoes);

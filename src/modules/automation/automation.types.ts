@@ -57,3 +57,7 @@ export interface ConsultarComCacheSaida<T> {
   resultado: T;
   cache: CacheInfo;
 }
+
+export interface ConsultarSincronaInput extends IniciarExecucaoInput {
+  waitSeg: number;
+}

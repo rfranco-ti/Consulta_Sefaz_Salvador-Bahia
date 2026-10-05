@@ -20,6 +20,8 @@ const schema = z.object({
   SEMAFORO_POR_PORTAL: z.coerce.number().int().positive().default(1),
   FILA_TIMEOUT_SEG: z.coerce.number().positive().default(90),
 
+  RATE_LIMIT_POR_MINUTO: z.coerce.number().int().positive().default(60),
+
   DATABASE_PATH: z.string().default('./data/app.sqlite'),
   STORAGE_DIR: z.string().default('./storage'),
 });

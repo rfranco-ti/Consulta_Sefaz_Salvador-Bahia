@@ -29,9 +29,14 @@ export interface JobWorker {
 
 export type ResultadoExecutor = Record<string, unknown>;
 
+export interface DepsExecutor {
+  criarSessao(portal: string): Promise<BrowserSession>;
+}
+
 export type Executor = (
   execucao: Execucao,
   sessao: BrowserSession,
+  deps?: DepsExecutor,
 ) => Promise<ResultadoExecutor>;
 
 export interface EventoProgresso {

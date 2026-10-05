@@ -4,10 +4,19 @@ import {
 } from '../../src/automations/sites/consulta-inscricoes/consulta-inscricoes.robot.js';
 import type { Execucao } from '../../src/database/index.js';
 import type { BrowserSession } from '../../src/modules/browser/browser.types.js';
-import { obterExecutor, registrarExecutor } from '../../src/modules/jobs/executor.js';
+import { limparExecutores, obterExecutor, registrarExecutor } from '../../src/modules/jobs/executor.js';
 import { obterCanalProgresso } from '../../src/modules/jobs/progresso.js';
-import type { ResultadoExecutor } from '../../src/modules/jobs/job.types.js';
-import { EtapaError, ValidationError } from '../../src/shared/errors/index.js';
+import type {
+  DepsExecutor,
+  Executor,
+  ResultadoExecutor,
+} from '../../src/modules/jobs/job.types.js';
+import {
+  BrowserError,
+  EtapaError,
+  InternalError,
+  ValidationError,
+} from '../../src/shared/errors/index.js';
 
 const CNPJ_MASCARA = '12.345.678/0001-95';
 const CNPJ_DIGITOS = '12345678000195';
@@ -42,6 +51,31 @@ function esperar(ms: number): Promise<void> {
   });
 }
 
+function montarDeps(): {
+  deps: DepsExecutor;
+  portais: string[];
+  sessoes: BrowserSession[];
+  totalLiberadas(): number;
+} {
+  const portais: string[] = [];
+  const sessoes: BrowserSession[] = [];
+  let liberadas = 0;
+  const deps: DepsExecutor = {
+    criarSessao: async (portal: string) => {
+      portais.push(portal);
+      const sessaoFilha = {
+        portal,
+        liberar: async () => {
+          liberadas += 1;
+        },
+      } as unknown as BrowserSession;
+      sessoes.push(sessaoFilha);
+      return sessaoFilha;
+    },
+  };
+  return { deps, portais, sessoes, totalLiberadas: () => liberadas };
+}
+
 describe('executor consulta-inscricoes', () => {
   it('registra seu executor no carregamento do módulo', () => {
     expect(obterExecutor('consulta-inscricoes')).toBe(executarConsultaInscricoes);
@@ -59,10 +93,18 @@ describe('executor consulta-inscricoes', () => {
       return { sucesso: true, dados: {} };
     });
     await expect(
-      executarConsultaInscricoes(montarExecucao('exe_ci_invalido', { cnpj: '123' }), sessao),
+      executarConsultaInscricoes(
+        montarExecucao('exe_ci_invalido', { cnpj: '123' }),
+        sessao,
+        montarDeps().deps,
+      ),
     ).rejects.toBeInstanceOf(ValidationError);
     await expect(
-      executarConsultaInscricoes(montarExecucao('exe_ci_payload', 'não-json{'), sessao),
+      executarConsultaInscricoes(
+        montarExecucao('exe_ci_payload', 'não-json{'),
+        sessao,
+        montarDeps().deps,
+      ),
     ).rejects.toBeInstanceOf(ValidationError);
     expect(chamadasEstadual).toBe(0);
     expect(chamadasMunicipal).toBe(0);
@@ -103,6 +145,7 @@ describe('executor consulta-inscricoes', () => {
       const resultado = await executarConsultaInscricoes(
         montarExecucao('exe_ci_feliz', { cnpj: CNPJ_MASCARA }),
         sessao,
+        montarDeps().deps,
       );
       expect(resultado['sucesso']).toBe(true);
       const dados = resultado['dados'] as Record<string, string>;
@@ -140,6 +183,7 @@ describe('executor consulta-inscricoes', () => {
     const resultado = await executarConsultaInscricoes(
       montarExecucao('exe_ci_parcial', { cnpj: CNPJ_DIGITOS }),
       sessao,
+      montarDeps().deps,
     );
     expect(resultado['sucesso']).toBe(true);
     const dados = resultado['dados'] as Record<string, unknown>;
@@ -163,6 +207,7 @@ describe('executor consulta-inscricoes', () => {
     const resultado = await executarConsultaInscricoes(
       montarExecucao('exe_ci_vazio', { cnpj: CNPJ_DIGITOS }),
       sessao,
+      montarDeps().deps,
     );
     expect(resultado['sucesso']).toBe(false);
     expect(String(resultado['mensagem'])).toMatch(/Nenhuma inscrição encontrada/);
@@ -181,6 +226,7 @@ describe('executor consulta-inscricoes', () => {
       await executarConsultaInscricoes(
         montarExecucao('exe_ci_erro', { cnpj: CNPJ_DIGITOS }),
         sessao,
+        montarDeps().deps,
       );
     } catch (e) {
       erro = e;
@@ -203,6 +249,7 @@ describe('executor consulta-inscricoes', () => {
       await executarConsultaInscricoes(
         montarExecucao('exe_ci_erro_mun', { cnpj: CNPJ_DIGITOS }),
         sessao,
+        montarDeps().deps,
       );
     } catch (e) {
       erro = e;
@@ -229,6 +276,7 @@ describe('executor consulta-inscricoes', () => {
     const resultado = await executarConsultaInscricoes(
       montarExecucao('exe_ci_paralelo', { cnpj: CNPJ_DIGITOS }),
       sessao,
+      montarDeps().deps,
     );
     expect(resultado['sucesso']).toBe(true);
     expect(ordem.slice(0, 2).sort()).toEqual(['estadual-inicio', 'municipal-inicio']);
@@ -250,6 +298,7 @@ describe('executor consulta-inscricoes', () => {
     const comArtefatos = await executarConsultaInscricoes(
       montarExecucao('exe_ci_art', { cnpj: CNPJ_DIGITOS, artefatos: 'ambos' }),
       sessao,
+      montarDeps().deps,
     );
     expect(comArtefatos['pdfEstadualBase64']).toBe('cGRmLWJh');
     expect(comArtefatos['pdfMunicipalBase64']).toBe('cGRmLWZpY2hh');
@@ -258,10 +307,127 @@ describe('executor consulta-inscricoes', () => {
     const semArtefatos: ResultadoExecutor = await executarConsultaInscricoes(
       montarExecucao('exe_ci_sem_art', { cnpj: CNPJ_DIGITOS }),
       sessao,
+      montarDeps().deps,
     );
     expect(semArtefatos['pdfEstadualBase64']).toBeUndefined();
     expect(semArtefatos['pdfMunicipalBase64']).toBeUndefined();
     expect(semArtefatos['printEstadualBase64']).toBeUndefined();
     expect(semArtefatos['printMunicipalBase64']).toBeUndefined();
+  });
+
+  it('abre uma sessão por portal e entrega a sessão própria a cada filho', async () => {
+    const sessoesFilhas: Record<string, BrowserSession | undefined> = {};
+    registrarExecutor('sefaz-bahia', async (_execucao, sessaoFilha) => {
+      sessoesFilhas['estadual'] = sessaoFilha;
+      return { sucesso: true, dados: { inscricaoEstadual: '123456789' } };
+    });
+    registrarExecutor('ficha-cadastral', async (_execucao, sessaoFilha) => {
+      sessoesFilhas['municipal'] = sessaoFilha;
+      return { sucesso: true, dados: { inscricaoMunicipal: '7654321' } };
+    });
+    const fabricadas = montarDeps();
+    const resultado = await executarConsultaInscricoes(
+      montarExecucao('exe_ci_sessoes', { cnpj: CNPJ_DIGITOS }),
+      sessao,
+      fabricadas.deps,
+    );
+    expect(resultado['sucesso']).toBe(true);
+    expect(fabricadas.portais).toEqual(['SEFAZ_BA', 'PREF_SALVADOR']);
+    expect(fabricadas.sessoes).toHaveLength(2);
+    expect(sessoesFilhas['estadual']).toBe(fabricadas.sessoes[0]);
+    expect(sessoesFilhas['municipal']).toBe(fabricadas.sessoes[1]);
+    expect(sessoesFilhas['estadual']).not.toBe(sessoesFilhas['municipal']);
+    expect(sessoesFilhas['estadual']).not.toBe(sessao);
+    expect(sessoesFilhas['municipal']).not.toBe(sessao);
+    expect(fabricadas.totalLiberadas()).toBe(2);
+  });
+
+  it('fecha as duas sessões quando um filho falha', async () => {
+    registrarExecutor('sefaz-bahia', async () => {
+      throw new Error('portal fora do ar');
+    });
+    registrarExecutor('ficha-cadastral', async () => ({
+      sucesso: true,
+      dados: { inscricaoMunicipal: '7654321' },
+    }));
+    const fabricadas = montarDeps();
+    await expect(
+      executarConsultaInscricoes(
+        montarExecucao('exe_ci_fecha_erro', { cnpj: CNPJ_DIGITOS }),
+        sessao,
+        fabricadas.deps,
+      ),
+    ).rejects.toBeInstanceOf(EtapaError);
+    expect(fabricadas.portais).toEqual(['SEFAZ_BA', 'PREF_SALVADOR']);
+    expect(fabricadas.totalLiberadas()).toBe(2);
+  });
+
+  it('fecha a sessão criada quando a segunda criação falha', async () => {
+    let estaduais = 0;
+    let liberadasEstadual = 0;
+    const deps: DepsExecutor = {
+      criarSessao: async (portal: string) => {
+        if (portal === 'PREF_SALVADOR') {
+          throw new BrowserError('Navegador falhou ao iniciar');
+        }
+        estaduais += 1;
+        return {
+          liberar: async () => {
+            liberadasEstadual += 1;
+          },
+        } as unknown as BrowserSession;
+      },
+    };
+    let chamadasEstadual = 0;
+    let chamadasMunicipal = 0;
+    registrarExecutor('sefaz-bahia', async () => {
+      chamadasEstadual += 1;
+      return { sucesso: true, dados: {} };
+    });
+    registrarExecutor('ficha-cadastral', async () => {
+      chamadasMunicipal += 1;
+      return { sucesso: true, dados: {} };
+    });
+    await expect(
+      executarConsultaInscricoes(
+        montarExecucao('exe_ci_criacao_falha', { cnpj: CNPJ_DIGITOS }),
+        sessao,
+        deps,
+      ),
+    ).rejects.toBeInstanceOf(BrowserError);
+    expect(estaduais).toBe(1);
+    expect(liberadasEstadual).toBe(1);
+    expect(chamadasEstadual).toBe(0);
+    expect(chamadasMunicipal).toBe(0);
+  });
+
+  it('exige fábrica de sessões e não aciona os filhos sem ela', async () => {
+    let chamadasEstadual = 0;
+    let chamadasMunicipal = 0;
+    registrarExecutor('sefaz-bahia', async () => {
+      chamadasEstadual += 1;
+      return { sucesso: true, dados: {} };
+    });
+    registrarExecutor('ficha-cadastral', async () => {
+      chamadasMunicipal += 1;
+      return { sucesso: true, dados: {} };
+    });
+    await expect(
+      executarConsultaInscricoes(montarExecucao('exe_ci_sem_deps', { cnpj: CNPJ_DIGITOS }), sessao),
+    ).rejects.toBeInstanceOf(InternalError);
+    expect(chamadasEstadual).toBe(0);
+    expect(chamadasMunicipal).toBe(0);
+  });
+
+  it('mantém compatível executor de dois parâmetros', async () => {
+    const executorDuas: Executor = async (execucao) => ({ eco: execucao.id });
+    registrarExecutor('sefaz-bahia', executorDuas);
+    const executor = obterExecutor('sefaz-bahia');
+    const resultado = await executor(
+      montarExecucao('exe_ci_compativel', { cnpj: CNPJ_DIGITOS }),
+      sessao,
+      montarDeps().deps,
+    );
+    expect(resultado).toEqual({ eco: 'exe_ci_compativel' });
   });
 });

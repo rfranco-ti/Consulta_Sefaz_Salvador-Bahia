@@ -29,6 +29,12 @@ interface AcertoLeitura {
   ttlRestanteSeg: number;
 }
 
+export interface LeituraCache {
+  dados: unknown;
+  camada: 'memoria' | 'sqlite';
+  ttlRestanteSeg: number;
+}
+
 const CAPACIDADE_MEMORIA_PADRAO = 500;
 const MILIS_POR_SEGUNDO = 1000;
 
@@ -146,6 +152,37 @@ export class CacheConsultas {
 
   limparMemoria(): void {
     this.memoria.clear();
+  }
+
+  ler(tipo: TipoAutomacao, payload: unknown): LeituraCache | null {
+    if (!ehTipoAutomacao(tipo)) {
+      throw new ValidationError(`Tipo de automação inválido: ${String(tipo)}`);
+    }
+    const versao = this.versaoCache(tipo);
+    const chave = montarChaveCache(tipo, payload);
+    const acerto = this.lerCamadas(tipo, chave, versao);
+    if (acerto === null) {
+      return null;
+    }
+    return { dados: acerto.dados, camada: acerto.camada, ttlRestanteSeg: acerto.ttlRestanteSeg };
+  }
+
+  gravarSucesso(tipo: TipoAutomacao, payload: unknown, resultado: unknown): void {
+    if (!ehTipoAutomacao(tipo)) {
+      throw new ValidationError(`Tipo de automação inválido: ${String(tipo)}`);
+    }
+    let dados: string | undefined;
+    try {
+      dados = JSON.stringify(resultado);
+    } catch {
+      dados = undefined;
+    }
+    if (dados === undefined) {
+      throw new ValidationError('Resultado da consulta inválido para armazenamento no cache');
+    }
+    const versao = this.versaoCache(tipo);
+    const chave = montarChaveCache(tipo, payload);
+    this.gravar(tipo, chave, versao, dados);
   }
 
   tamanhoMemoria(): number {
