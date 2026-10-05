@@ -1,0 +1,29 @@
+{
+  "metadata": {
+    "nome": "CADIN Salvador",
+    "sigla": "CADIN_SALVADOR",
+    "versao": "1.0",
+    "autor": "Tech Lead - eContabil",
+    "dataCriacao": "2026-08-10",
+    "dataUltimaValidacao": "2026-08-10",
+    "urlOficial": "http://www.cadin.sefaz.salvador.ba.gov.br/CADIN/default.aspx",
+    "descricao": "Consulta ao Cadastro Informativo Municipal (CADIN) de Salvador"
+  },
+  "human": {
+    "perfil": "normal"
+  },
+  "recursos": {
+    "bloquearTipos": ["font", "media"],
+    "bloquearHosts": ["google-analytics.com", "googletagmanager.com", "googleadservices.com", "doubleclick.net", "hotjar.com", "clarity.ms", "facebook.net", "mixpanel.com"]
+  },
+  "navegacao": {
+    "url": "http://www.cadin.sefaz.salvador.ba.gov.br/CADIN/default.aspx",
+    "timeout": 30000,
+    "waitUntil": "domcontentloaded"
+  },
+  "captcha": {
+    "seletoresImagem": ["img[src*=\"CaptchaImage.aspx\"]"]
+  },
+  "steps": [],
+  "extracao": {}
+}

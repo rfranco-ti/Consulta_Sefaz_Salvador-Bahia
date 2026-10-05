@@ -1,0 +1,26 @@
+{
+  "metadata": {
+    "nome": "Ficha Cadastral Salvador",
+    "sigla": "FICHA_CADASTRAL",
+    "versao": "1.0",
+    "autor": "Tech Lead - eContabil",
+    "dataCriacao": "2026-08-10",
+    "dataUltimaValidacao": "2026-08-10",
+    "urlOficial": "https://servicosweb.sefaz.salvador.ba.gov.br/WebsiteV2/Sistemas/AlvaraCgaInternet/Modulos/Principal/AlvaraCgaEmissaoFichaResumidaFrm.aspx",
+    "descricao": "Ficha Cadastral resumida (CGA) em Salvador"
+  },
+  "human": {
+    "perfil": "rapido"
+  },
+  "recursos": {
+    "bloquearTipos": ["font", "media"],
+    "bloquearHosts": ["google-analytics.com", "googletagmanager.com", "googleadservices.com", "doubleclick.net", "hotjar.com", "clarity.ms", "facebook.net", "mixpanel.com"]
+  },
+  "navegacao": {
+    "url": "https://servicosweb.sefaz.salvador.ba.gov.br/WebsiteV2/Sistemas/AlvaraCgaInternet/Modulos/Principal/AlvaraCgaEmissaoFichaResumidaFrm.aspx",
+    "timeout": 30000,
+    "waitUntil": "domcontentloaded"
+  },
+  "steps": [],
+  "extracao": {}
+}

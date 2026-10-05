@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "nome": "Portal Sem Sigla"
+  },
+  "navegacao": {
+    "url": "https://exemplo.test/consulta",
+    "timeout": 30000,
+    "waitUntil": "domcontentloaded"
+  },
+  "steps": [],
+  "extracao": {}
+}

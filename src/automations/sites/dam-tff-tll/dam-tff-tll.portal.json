@@ -1,0 +1,32 @@
+{
+  "metadata": {
+    "nome": "DAM TFF/TLL Salvador",
+    "sigla": "DAM_TFF_TLL",
+    "versao": "1.0",
+    "autor": "Tech Lead - eContabil",
+    "dataCriacao": "2026-09-17",
+    "dataUltimaValidacao": "2026-09-17",
+    "urlOficial": "https://servicosweb.sefaz.salvador.ba.gov.br/sistema/dam/TFF/servicos_DamTFF.asp",
+    "descricao": "Emissão de 2ª via do DAM TFF/TLL por CGA e exercício (captcha via campo oculto form2)"
+  },
+  "human": {
+    "perfil": "rapido"
+  },
+  "recursos": {
+    "bloquearTipos": ["font", "media"],
+    "bloquearHosts": ["google-analytics.com", "googletagmanager.com", "googleadservices.com", "doubleclick.net", "hotjar.com", "clarity.ms", "facebook.net", "mixpanel.com"]
+  },
+  "navegacao": {
+    "url": "https://servicosweb.sefaz.salvador.ba.gov.br/sistema/dam/TFF/servicos_DamTFF.asp",
+    "timeout": 30000,
+    "waitUntil": "domcontentloaded"
+  },
+  "captcha": {
+    "html": {
+      "habilitado": true,
+      "campoOculto": "input[name=\"form2\"]"
+    }
+  },
+  "steps": [],
+  "extracao": {}
+}

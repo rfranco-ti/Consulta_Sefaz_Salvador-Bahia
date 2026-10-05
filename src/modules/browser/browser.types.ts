@@ -1,7 +1,11 @@
 import type { Browser, BrowserContext, Page } from 'playwright-core';
+import type { ArtefatosOpcao } from '../automation/automation.types.js';
+import type { PortalConfig } from './portal-config.js';
 
 export interface BrowserSessionOptions {
   portal?: string;
+  portalConfig?: PortalConfig;
+  artefatos?: ArtefatosOpcao;
   acceptDownloads?: boolean;
   storageState?: string;
 }

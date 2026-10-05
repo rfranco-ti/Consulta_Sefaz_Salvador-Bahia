@@ -1,0 +1,26 @@
+{
+  "metadata": {
+    "nome": "Portal Exemplo",
+    "sigla": "EXEMPLO",
+    "versao": "1.0",
+    "autor": "api-sefaz-ssa",
+    "dataCriacao": "2026-10-05",
+    "dataUltimaValidacao": "2026-10-05",
+    "urlOficial": "https://exemplo.test/consulta",
+    "descricao": "Fixture de teste para o loader de portal-config"
+  },
+  "human": {
+    "perfil": "normal"
+  },
+  "recursos": {
+    "bloquearTipos": ["image", "font", "media"],
+    "bloquearHosts": ["analytics.exemplo.test", "ads.exemplo.test"]
+  },
+  "navegacao": {
+    "url": "https://exemplo.test/consulta",
+    "timeout": 30000,
+    "waitUntil": "domcontentloaded"
+  },
+  "steps": [],
+  "extracao": {}
+}

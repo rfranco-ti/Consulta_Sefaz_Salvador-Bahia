@@ -1,0 +1,26 @@
+{
+  "metadata": {
+    "nome": "IPTU Salvador",
+    "sigla": "IPTU_SALVADOR",
+    "versao": "1.0",
+    "autor": "Tech Lead - eContabil",
+    "dataCriacao": "2026-08-10",
+    "dataUltimaValidacao": "2026-08-10",
+    "urlOficial": "https://servicosweb.sefaz.salvador.ba.gov.br/WebsiteV2/Sistemas/CertidaoDadosCadastrais/Modulos/Principal/CertidaoDadosCadastraisFrm.aspx",
+    "descricao": "Certidão de dados cadastrais (IPTU) em Salvador"
+  },
+  "human": {
+    "perfil": "normal"
+  },
+  "recursos": {
+    "bloquearTipos": ["font", "media"],
+    "bloquearHosts": ["google-analytics.com", "googletagmanager.com", "googleadservices.com", "doubleclick.net", "hotjar.com", "clarity.ms", "facebook.net", "mixpanel.com"]
+  },
+  "navegacao": {
+    "url": "https://servicosweb.sefaz.salvador.ba.gov.br/WebsiteV2/Sistemas/CertidaoDadosCadastrais/Modulos/Principal/CertidaoDadosCadastraisFrm.aspx",
+    "timeout": 60000,
+    "waitUntil": "domcontentloaded"
+  },
+  "steps": [],
+  "extracao": {}
+}

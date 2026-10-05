@@ -1,0 +1,109 @@
+{
+  "metadata": {
+    "nome": "SEFAZ Bahia",
+    "sigla": "SEFAZ_BA",
+    "versao": "1.0",
+    "autor": "Tech Lead - eContabil",
+    "dataCriacao": "2026-05-01",
+    "dataUltimaValidacao": "2026-05-01",
+    "urlOficial": "https://portal.sefaz.ba.gov.br/scripts/cadastro/cadastroBa/consultaBa.asp",
+    "descricao": "Consulta cadastro de contribuintes e Inscrição Estadual no portal da SEFAZ Bahia"
+  },
+  "human": {
+    "perfil": "normal"
+  },
+  "recursos": {
+    "bloquearTipos": ["font", "media"],
+    "bloquearHosts": ["google-analytics.com", "googletagmanager.com", "googleadservices.com", "doubleclick.net", "hotjar.com", "clarity.ms", "facebook.net", "mixpanel.com"]
+  },
+  "navegacao": {
+    "url": "https://portal.sefaz.ba.gov.br/scripts/cadastro/cadastroBa/consultaBa.asp",
+    "timeout": 30000,
+    "waitUntil": "domcontentloaded"
+  },
+  "steps": [
+    {
+      "id": "digitar_cnpj",
+      "descricao": "Preenche o campo de CNPJ",
+      "acao": "preencher",
+      "seletores": {
+        "xpath": "/html/body/table/tbody/tr[3]/td/table/tbody/tr[2]/td[2]/table/tbody/tr[2]/td[2]/p/input",
+        "fallbacks": [
+          { "tipo": "css", "valor": "input[name*='cnpj'], input[id*='Cnpj']" }
+        ]
+      },
+      "config": {
+        "campoRef": "{cnpj}",
+        "limparPrimeiro": true,
+        "digitarDevagar": true
+      },
+      "humanizar": {
+        "moverMouseAntes": true,
+        "delayAntes": [300, 600],
+        "delayDepois": [500, 1000]
+      }
+    },
+    {
+      "id": "clicar_consultar",
+      "descricao": "Clica no botão Consultar",
+      "acao": "clicar",
+      "seletores": {
+        "xpath": "/html/body/table/tbody/tr[3]/td/table/tbody/tr[2]/td[2]/table/tbody/tr[2]/td[4]/input",
+        "fallbacks": [{ "tipo": "text", "valor": "Consultar" }]
+      },
+      "config": {
+        "aguardarNavegacao": true,
+        "aguardarTimeout": 15000
+      },
+      "humanizar": {
+        "moverMouseAntes": true,
+        "delayAntes": [300, 600]
+      }
+    }
+  ],
+  "extracao": {
+    "inscricao_estadual": {
+      "descricao": "Inscrição Estadual",
+      "obrigatorio": true,
+      "tipo": "texto",
+      "seletor": {
+        "xpath": "/html/body/table/tbody/tr[3]/td/table[2]/tbody/tr/td/p[1]/table/tbody/tr[3]/td[2]",
+        "atributo": "textContent"
+      },
+      "regex": [
+        {
+          "padrao": "Inscri\u00e7\u00e3o Estadual:\\s*([0-9.\\-\\s]+[A-Z]*)",
+          "grupo": 1,
+          "flags": "gi"
+        }
+      ],
+      "posProcessamento": { "trim": true }
+    },
+    "situacao_cadastral": {
+      "descricao": "Situação Cadastral Vigente",
+      "tipo": "texto",
+      "seletor": {
+        "xpath": "/html/body/table/tbody/tr[3]/td/table[2]/tbody/tr/td/table[1]/tbody/tr[13]/td[1]",
+        "atributo": "textContent"
+      },
+      "regex": [
+        {
+          "padrao": "Situa\u00e7\u00e3o Cadastral Vigente:\\s*([A-Z\\s]+)",
+          "grupo": 1
+        }
+      ]
+    },
+    "endereco": {
+      "descricao": "Endereço de correspondência",
+      "tipo": "texto",
+      "seletor": {
+        "xpath": "/html/body/table/tbody/tr[3]/td/table[2]/tbody/tr/td/p[2]/table/tbody/tr[7]/td[1]",
+        "atributo": "textContent"
+      }
+    }
+  },
+  "posExtracao": [
+    { "acao": "screenshot", "nome": "consulta_sefaz_ba", "fullPage": true },
+    { "acao": "pdf", "formato": "A4" }
+  ]
+}
