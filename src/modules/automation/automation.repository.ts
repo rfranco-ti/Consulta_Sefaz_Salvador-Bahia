@@ -2,13 +2,6 @@ import type { TipoAutomacao } from '../../automations/registry.js';
 import { InternalError, NotFoundError } from '../../shared/errors/index.js';
 import type { ExecucaoResposta } from './automation.types.js';
 
-/**
- * Persistencia das execucoes (tabelas `execucoes` e
- * `execucoes_participantes` — .docs/DATABASE.md).
- *
- * TODO(Fase 3): implementar com better-sqlite3 (queries parametrizadas)
- * apos as migrations.
- */
 export interface ExecucaoRegistro {
   id: string;
   tipo: TipoAutomacao;

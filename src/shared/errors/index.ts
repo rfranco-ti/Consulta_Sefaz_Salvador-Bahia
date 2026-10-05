@@ -1,16 +1,7 @@
-/**
- * Hierarquia de erros (.docs/ERROR_HANDLING.md).
- *
- * `AppError` vira resposta HTTP padrao no error handler do Fastify:
- *   { error: { code, message, details? } }
- * Stack trace nunca vai ao cliente.
- */
-
 export class AppError extends Error {
   readonly code: string;
   readonly httpStatus: number;
   readonly details?: unknown;
-  /** Etapa da automacao quando aplicavel (diagnostico). */
   readonly etapa?: string;
 
   constructor(
@@ -64,14 +55,12 @@ export class RateLimitedError extends AppError {
   }
 }
 
-/** Falha na automacao (portal, seletor, parse). */
 export class AutomationError extends AppError {
   constructor(message: string, options?: { etapa?: string; cause?: unknown }) {
     super('AUTOMACAO_ERROR', message, 500, options);
   }
 }
 
-/** + etapa/URL para diagnostico. */
 export class EtapaError extends AutomationError {
   constructor(etapa: string, message: string, options?: { cause?: unknown }) {
     super(`[${etapa}] ${message}`, { ...options, etapa });
@@ -96,7 +85,6 @@ export class TimeoutError extends AppError {
   }
 }
 
-/** Portal/servico externo fora do ar ou resposta invalida. */
 export class ExternalServiceError extends AppError {
   constructor(message: string) {
     super('EXTERNAL_SERVICE_ERROR', message, 502);
@@ -115,11 +103,9 @@ export class InternalError extends AppError {
   }
 }
 
-/** Converte qualquer rejeicao em AppError (mapeia, nao mascara). */
 export function paraAppError(erro: unknown): AppError {
   if (erro instanceof AppError) return erro;
   if (erro instanceof Error) {
-    // Erros de timeout do Node/Playwright viram TimeoutError.
     if (erro.name === 'TimeoutError' || erro.name === 'TimeoutErrorImpl') {
       return new TimeoutError(erro.message);
     }

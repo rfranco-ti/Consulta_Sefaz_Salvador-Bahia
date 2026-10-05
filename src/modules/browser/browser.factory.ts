@@ -1,33 +1,9 @@
 import { InternalError } from '../../shared/errors/index.js';
-import type { Browser, LaunchOptions } from 'playwright';
+import type { Browser } from 'playwright-core';
 import type { PoolSnapshot } from './browser.types.js';
 
-/**
- * Pool de browsers (.docs/ARCHITECTURE.md — "Browser: pool e isolamento").
- *
- * - 1 Chromium quente lancado sob demanda, reutilizado
- * - acquire()/release() com contagem; reciclagem apos N execucoes ou
- *   por limite de memoria (substituicao em background)
- * - idle shutdown apos X minutos sem uso; relanca no proximo job
- * - flags de economia: --disable-dev-shm-usage, --disable-gpu,
- *   --disable-background-networking
- * - UA sanitizado em ponto unico (HeadlessChrome -> Chrome)
- * - hook `disconnected` → relancar automaticamente
- *
- * TODO(Fase 2): implementar.
- */
 export class BrowserFactory {
-  private readonly launchOptions: LaunchOptions = {
-    headless: true,
-    args: [
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--disable-background-networking',
-    ],
-  };
-
   async acquire(): Promise<Browser> {
-    void this.launchOptions;
     throw new InternalError('BrowserFactory.acquire nao implementado (Fase 2)');
   }
 
@@ -48,6 +24,5 @@ export class BrowserFactory {
   }
 
   async shutdown(): Promise<void> {
-    // no-op no scaffold
   }
 }

@@ -1,6 +1,5 @@
 import type { TipoAutomacao } from '../../automations/registry.js';
 
-/** Opcoes de artefatos aceitas pela API (API.md). */
 export type ArtefatosOpcao = 'nenhum' | 'pdf' | 'print' | 'ambos';
 
 export interface DocumentoInfo {
@@ -18,7 +17,6 @@ export interface CacheInfo {
   ttlRestanteSeg?: number;
 }
 
-/** Shape do resultado de uma automacao (AUTOMATIONS.md). */
 export interface ResultadoAutomacao {
   sucesso: boolean;
   dados: Record<string, unknown>;
@@ -26,7 +24,6 @@ export interface ResultadoAutomacao {
   mensagem?: string;
 }
 
-/** Resposta comum a todas as rotas de execucao. */
 export interface ExecucaoResposta {
   execucaoId: string;
   status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';

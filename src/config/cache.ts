@@ -1,15 +1,6 @@
 import { env } from './env.js';
 import type { TipoAutomacao } from '../automations/registry.js';
 
-/**
- * TTL de cache por tipo de automacao (.docs/JOBS.md, DECISIONS.md D0004).
- *
- * Override por ambiente: CACHE_<TIPO_EM_SNAKE> no .env
- *   ex.: CACHE_SEFAZ_BAHIA=14d   CACHE_DAM_TFF_TLL=24h
- *
- * Formato aceito: `30s`, `45m`, `12h`, `7d`.
- */
-
 const SEGUNDO = 1000;
 const MINUTO = 60 * SEGUNDO;
 const HORA = 60 * MINUTO;
@@ -17,7 +8,6 @@ const DIA = 24 * HORA;
 
 export interface CacheConfig {
   ttlMs: number;
-  /** DAM: quase toda emissao pede estado atual (DECISIONS.md D0004). */
   forceRefreshDefault: boolean;
 }
 
@@ -34,7 +24,6 @@ const PADRAO: Record<TipoAutomacao, CacheConfig> = {
   'dam-tll': { ttlMs: 12 * HORA, forceRefreshDefault: true },
 };
 
-/** Converte `30s` | `45m` | `12h` | `7d` em milissegundos. */
 export function parseDuracao(valor: string): number {
   const m = /^(\d+)(s|m|h|d)$/.exec(valor.trim());
   if (!m) throw new Error(`Duracao invalida: "${valor}" (use 30s, 45m, 12h, 7d)`);
@@ -63,13 +52,10 @@ export function cacheConfig(tipo: TipoAutomacao): CacheConfig {
   return { ...base, ttlMs: parseDuracao(override) };
 }
 
-/** Invalidacao global por tipo: bump de versao invalida o cache inteiro do tipo. */
 export const CACHE_VERSION = 1;
 
-/** Exposto para /metrics e testes. */
 export const CACHE_PADRAO = PADRAO;
 
-// Falha rapida em config ruim de ambiente.
 if (env.NODE_ENV !== 'test') {
   for (const tipo of Object.keys(PADRAO) as TipoAutomacao[]) {
     cacheConfig(tipo);

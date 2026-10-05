@@ -1,8 +1,22 @@
 # api-sefaz-ssa
 
-API HTTP para consultas automatizadas em portais da SEFAZ Bahia e da Prefeitura de Salvador. A automacao roda em um navegador headless (Playwright) e devolve os dados estruturados em JSON, com opcao de retornar tambem o PDF ou o print da pagina.
+API HTTP para consultas automatizadas em portais da SEFAZ Bahia e da Prefeitura de Salvador. A automacao roda em um navegador headless controlado por Playwright, no servidor, e devolve os dados estruturados em JSON — com opcao de retornar tambem o PDF ou o print da pagina.
 
-O sistema foi feito para uso interno de uma equipe pequena (ate 10 usuarios simultaneos), operando em um servidor simples, com baixo consumo de recursos.
+Projetada para uso interno de uma equipe pequena (ate 10 usuarios simultaneos), em servidor simples, com consumo controlado de recursos.
+
+## Origem
+
+As consultas aos portais da SEFAZ Bahia e da Prefeitura de Salvador eram feitas manualmente, uma a uma. Para acelerar, foi criada uma suite de automacoes em Python que rodava localmente na maquina de cada usuario: o processo ficou mais rapido, mas o navegador headless consumia CPU e memoria da propria estacao de trabalho, deixando o computador inoperante durante a execucao.
+
+Este projeto e a reescrita desse modelo como API. A automacao roda em um servidor (local ou em nuvem); as maquinas dos usuarios apenas enviam a requisicao HTTP e recebem o resultado. O custo do navegador passa a ser do servidor, concentrado em um pool de browser reutilizado, com limite de concorrencia e cache de resultados.
+
+Mantivemos o mesmo proposito tecnico da suite Python, com o runtime corrigido:
+
+- eliminar a dependencia de maquina local dedicada (a consulta roda no servidor);
+- concentrar o custo de navegador num pool com contexto isolado por execucao;
+- fila FIFO persistida e limite de concorrencia por portal, para nao martelar os portais;
+- cache de resultados com TTL por tipo de consulta (evita reexecucao desnecessaria);
+- historico, auditoria e controle de acesso centralizados (SQLite + API key por colaborador).
 
 ## Escopo
 
@@ -43,9 +57,18 @@ Autenticacao por API key: cada usuario possui a propria chave (header `X-API-Key
 
 ```bash
 npm install
-npx playwright install chromium
+npm run browser:install
 cp .env.example .env
 # edite .env: defina ADMIN_KEY e gere ENCRYPTION_KEY
+```
+
+`npm run browser:install` baixa apenas o `chromium-headless-shell` (binario minimo de
+headless, ~90 MB — sem Firefox, sem WebKit, sem Chromium completo).
+
+Em Linux pode ser necessario instalar as bibliotecas de sistema uma unica vez:
+
+```bash
+npx playwright-core install-deps chromium
 ```
 
 Gerar a `ENCRYPTION_KEY`:
@@ -200,7 +223,7 @@ data/           banco SQLite
 
 ## Notas de operacao
 
-- O Chromium e lancado uma vez e reutilizado; cada execucao recebe um contexto isolado. O pool e reciclado periodicamente para manter o consumo de memoria estavel.
+- A automacao usa `chromium-headless-shell` (modo headless, binario minimo). O navegador e lancado uma vez e reutilizado; cada execucao recebe um contexto isolado. O pool e reciclado periodicamente para manter o consumo de memoria estavel.
 - Execucoes do mesmo portal rodam uma por vez (fila FIFO); portais diferentes rodam em paralelo.
 - Consultas identicas em andamento sao agrupadas (uma unica execucao serve varios pedidos).
 - Captcha e OCR sao resolvidos localmente (Tesseract), sem servicos externos de IA.
