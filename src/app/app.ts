@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import '../automations/index.js';
 import { env } from '../config/env.js';
 import { db, DocumentosRepository } from '../database/index.js';
 import { criarAutomationService } from '../modules/automation/automation.service.js';

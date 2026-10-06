@@ -8,7 +8,6 @@ import { registrarExtratorTextoPdf } from '../automations/base/ocr.js';
 import { cadeiaExtracaoTextoPdf } from '../automations/base/ocr/extracao-pdf.js';
 import { registrarResolvedorCaptcha } from '../automations/base/captcha.js';
 import { resolverCaptchaLocal } from '../automations/base/captcha/resolvedor.js';
-import '../automations/index.js';
 import { buildApp } from './app.js';
 
 export async function startServer(): Promise<FastifyInstance> {
