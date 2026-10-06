@@ -24,6 +24,9 @@ const schema = z.object({
 
   DATABASE_PATH: z.string().default('./data/app.sqlite'),
   STORAGE_DIR: z.string().default('./storage'),
+
+  HIGIENE_INTERVALO_MIN: z.coerce.number().int().positive().default(60),
+  DOCUMENTOS_TTL_DIAS: z.coerce.number().int().positive().default(7),
 });
 
 export const env = schema.parse(process.env);

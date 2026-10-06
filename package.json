@@ -14,6 +14,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "smoke": "tsx scripts/smoke.ts",
+    "db:backup": "tsx scripts/backup.ts",
     "browser:install": "playwright-core install chromium-headless-shell"
   },
   "dependencies": {
