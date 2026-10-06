@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import Tesseract = require('tesseract.js');
+import Tesseract from 'tesseract.js';
 import { InternalError } from '../../../shared/errors/index.js';
 import { preprocessarCaptchaImagem } from './preprocessamento.js';
 
