@@ -5,6 +5,7 @@ import type { Page } from 'playwright-core';
 import { z } from 'zod';
 import { BaseRobot, type ExecucaoCtx, type ResultadoRobot } from '../../base/base-robot.js';
 import { resolverCaptcha as decodificarCaptcha } from '../../base/captcha.js';
+import { detectarCaptchaImagem } from '../../base/captcha/detector.js';
 import { localizarPorChave, type CadeiaSeletores } from '../../base/seletores.js';
 import type { Execucao } from '../../../database/index.js';
 import type { BrowserSession } from '../../../modules/browser/browser.types.js';
@@ -462,7 +463,14 @@ export class CadinSalvadorRobot extends BaseRobot {
     exigirTempo(ctx.signal, 'resolver-captcha');
     this.emitir(ctx, 'log', 'Resolvendo o captcha do portal');
     try {
-      const imagem = await localizarPorChave(pagina, 'imagem_captcha', cadeias, 'resolver-captcha');
+      const seletores: string[] = cadeias['imagem_captcha']?.seletores ?? [];
+      const imagem = await detectarCaptchaImagem(pagina, seletores);
+      if (imagem === null) {
+        throw new EtapaError(
+          'resolver-captcha',
+          'Captcha não detectado: a imagem do captcha não apareceu na página.',
+        );
+      }
       const diretorio = path.join(tmpdir(), 'api-sefaz-ssa', `cadin-salvador-${documento}`);
       await mkdir(diretorio, { recursive: true });
       const caminhoImagem = path.join(diretorio, 'captcha.png');

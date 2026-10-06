@@ -39,3 +39,6 @@ npm-debug.log*
 Thumbs.db
 
 .ref/
+
+# Modelos de idioma do Tesseract (baixados no primeiro uso)
+*.traineddata

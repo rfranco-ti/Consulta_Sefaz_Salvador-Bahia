@@ -8,6 +8,7 @@ import {
   registrarResolvedorCaptcha,
   resolverCaptcha,
 } from '../../src/automations/base/captcha.js';
+import { detectarCaptchaImagem } from '../../src/automations/base/captcha/detector.js';
 import {
   executarCadinSalvador,
   cadinSalvadorInputSchema,
@@ -133,6 +134,59 @@ describe('porta captcha', () => {
     registrarResolvedorCaptcha(async (caminho) => `lido:${caminho}`);
     await expect(resolverCaptcha('/tmp/captcha.png')).resolves.toBe('lido:/tmp/captcha.png');
   });
+});
+
+describe('detector de captcha', () => {
+  it(
+    'retorna o handle da imagem no formulário do cadin',
+    { timeout: 60000 },
+    async () => {
+      const { sessao, fechar } = await abrirSessao();
+      try {
+        await sessao.page.setContent(formHtml);
+        const handle = await detectarCaptchaImagem(sessao.page, [
+          "img[src*='CaptchaImage.aspx']",
+        ]);
+        expect(handle).not.toBeNull();
+        await handle?.dispose();
+      } finally {
+        await fechar();
+      }
+    },
+  );
+
+  it(
+    'usa o seletor genérico quando a cadeia do portal está vazia',
+    { timeout: 60000 },
+    async () => {
+      const { sessao, fechar } = await abrirSessao();
+      try {
+        await sessao.page.setContent('<html><body><img src="captcha123.png"></body></html>');
+        const handle = await detectarCaptchaImagem(sessao.page, []);
+        expect(handle).not.toBeNull();
+        await handle?.dispose();
+      } finally {
+        await fechar();
+      }
+    },
+  );
+
+  it(
+    'retorna nulo quando a página não tem imagem de captcha',
+    { timeout: 60000 },
+    async () => {
+      const { sessao, fechar } = await abrirSessao();
+      try {
+        await sessao.page.setContent('<html><body><p>Sem captcha aqui</p></body></html>');
+        const handle = await detectarCaptchaImagem(sessao.page, [
+          "img[src*='CaptchaImage.aspx']",
+        ]);
+        expect(handle).toBeNull();
+      } finally {
+        await fechar();
+      }
+    },
+  );
 });
 
 describe('robot cadin-salvador', () => {

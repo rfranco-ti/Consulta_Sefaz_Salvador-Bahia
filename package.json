@@ -19,10 +19,13 @@
   "dependencies": {
     "@fastify/swagger": "^9.9.1",
     "@fastify/swagger-ui": "^6.1.1",
+    "@napi-rs/canvas": "^1.0.10",
     "better-sqlite3": "^12.2.0",
     "fastify": "^5.6.0",
+    "pdfjs-dist": "^6.4.299",
     "pino": "^9.13.0",
     "playwright-core": "^1.63.0",
+    "tesseract.js": "^7.0.0",
     "zod": "^4.1.0"
   },
   "devDependencies": {
