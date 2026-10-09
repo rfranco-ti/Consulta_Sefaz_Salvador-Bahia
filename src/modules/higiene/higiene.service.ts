@@ -38,11 +38,13 @@ export function executarHigiene(deps: DepsHigiene): ResumoHigiene {
   const cache = new CacheRepository(deps.banco);
   const documentos = new DocumentosRepository(deps.banco);
   const cacheRemovido = cache.removerExpirados(agoraTexto);
-  const expirados = documentos.removerExpirados(corte);
+  const expirados = documentos.removerExpiradosEm(agoraTexto);
+  const legados = documentos.removerExpiradosLegados(corte);
+  const removidos = [...expirados, ...legados];
   const base = resolve(deps.diretorioArmazenamento);
   let arquivosRemovidos = 0;
   let arquivosAusentes = 0;
-  for (const documento of expirados) {
+  for (const documento of removidos) {
     if (removerArquivoDocumento(base, documento)) {
       arquivosRemovidos += 1;
     } else {
@@ -51,7 +53,7 @@ export function executarHigiene(deps: DepsHigiene): ResumoHigiene {
   }
   return {
     cacheRemovido,
-    documentosRemovidos: expirados.length,
+    documentosRemovidos: removidos.length,
     arquivosRemovidos,
     arquivosAusentes,
   };

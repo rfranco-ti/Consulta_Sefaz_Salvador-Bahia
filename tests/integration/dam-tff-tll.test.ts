@@ -1,5 +1,4 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Browser } from 'playwright-core';
@@ -8,7 +7,10 @@ import {
   DamTffTllRobot,
   executarDamTffTll,
 } from '../../src/automations/sites/dam-tff-tll/dam-tff-tll.robot.js';
-import type { ExecucaoCtx } from '../../src/automations/base/base-robot.js';
+import {
+  diretorioArtefatosExecucao,
+  type ExecucaoCtx,
+} from '../../src/automations/base/base-robot.js';
 import type { Execucao } from '../../src/database/index.js';
 import type { BrowserSession } from '../../src/modules/browser/browser.types.js';
 import { obterExecutor } from '../../src/modules/jobs/executor.js';
@@ -164,6 +166,7 @@ async function servirCircuito(
 function montarCtxDireto(
   sessao: BrowserSession,
   artefatos: 'pdf' | 'ambos' = 'pdf',
+  execucaoId = 'exe_ctx_direto',
 ): {
   ctx: ExecucaoCtx;
   emitido: Array<{ nivel: string; mensagem: string }>;
@@ -181,6 +184,7 @@ function montarCtxDireto(
     },
     artefatos,
     signal: AbortSignal.timeout(120000),
+    execucaoId,
   };
   return { ctx, emitido, arquivos };
 }
@@ -480,7 +484,7 @@ describe('robot dam-tff-tll', () => {
     'segue com sucesso quando a geração de artefatos falha',
     { timeout: 90000 },
     async () => {
-      const destino = path.join(tmpdir(), 'api-sefaz-ssa', `dam-tff-tll-${CGA}-${EXERCICIO}`);
+      const destino = diretorioArtefatosExecucao('dam-tff-tll', 'exe_artefatos_falham', CGA, EXERCICIO);
       await rm(destino, { recursive: true, force: true });
       await mkdir(path.dirname(destino), { recursive: true });
       await writeFile(destino, 'bloqueio');
@@ -496,6 +500,7 @@ describe('robot dam-tff-tll', () => {
           registrarArquivo: () => undefined,
           artefatos: 'ambos',
           signal: AbortSignal.timeout(60000),
+          execucaoId: 'exe_artefatos_falham',
         };
         const robo = new DamTffTllRobot();
         const resultado = await robo.executar({ cga: CGA, exercicio: EXERCICIO }, ctx);

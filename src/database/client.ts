@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import Database from 'better-sqlite3';
-import { env } from '../config/env.js';
+import { caminhoBancoAbsoluto } from '../config/env.js';
 import { DatabaseError } from '../shared/errors/index.js';
 import { aplicarMigrations } from './migrations/index.js';
 
@@ -12,7 +12,7 @@ function garantirDiretorio(caminho: string): void {
   mkdirSync(dirname(resolve(caminho)), { recursive: true });
 }
 
-export function openDatabase(caminho: string = env.DATABASE_PATH): Database.Database {
+export function openDatabase(caminho: string = caminhoBancoAbsoluto()): Database.Database {
   try {
     garantirDiretorio(caminho);
     const banco = new Database(caminho);
@@ -26,7 +26,7 @@ export function openDatabase(caminho: string = env.DATABASE_PATH): Database.Data
   }
 }
 
-export function inicializarBanco(caminho: string = env.DATABASE_PATH): Database.Database {
+export function inicializarBanco(caminho: string = caminhoBancoAbsoluto()): Database.Database {
   const banco = openDatabase(caminho);
   aplicarMigrations(banco);
   return banco;

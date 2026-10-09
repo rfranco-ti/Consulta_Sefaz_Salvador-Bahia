@@ -1,9 +1,9 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Browser } from 'playwright-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { diretorioArtefatosExecucao } from '../../src/automations/base/base-robot.js';
 import { obterExtratorTextoPdf, registrarExtratorTextoPdf, removerExtratorTextoPdf } from '../../src/automations/base/ocr.js';
 import {
   analisarTextoFicha,
@@ -419,7 +419,7 @@ describe('robot ficha-cadastral', () => {
   it('prossegue com sucesso quando a geração de artefatos falha', { timeout: 90000 }, async () => {
     const { sessao, fechar } = await abrirSessao();
     const limparOcr = comOcrFalso();
-    const diretorio = path.join(tmpdir(), 'api-sefaz-ssa', `ficha-cadastral-${CNPJ_DIGITOS}`);
+    const diretorio = diretorioArtefatosExecucao('ficha-cadastral', 'exe_artefatos_falham', CNPJ_DIGITOS);
     await rm(diretorio, { recursive: true, force: true });
     await mkdir(path.dirname(diretorio), { recursive: true });
     await writeFile(diretorio, 'bloqueio');

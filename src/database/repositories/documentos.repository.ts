@@ -17,6 +17,7 @@ export interface Documento {
   nomeArquivo: string;
   tamanhoBytes: number;
   criadoEm: string;
+  expiraEm: string | null;
 }
 
 export interface InserirDocumentoInput {
@@ -29,6 +30,7 @@ export interface InserirDocumentoInput {
   nomeArquivo: string;
   tamanhoBytes: number;
   criadoEm?: string;
+  expiraEm?: string | null;
 }
 
 interface DocumentoLinha {
@@ -41,10 +43,11 @@ interface DocumentoLinha {
   nome_arquivo: string;
   tamanho_bytes: number;
   criado_em: string;
+  expira_em: string | null;
 }
 
 const COLUNAS =
-  'id, execucao_id, api_key_id, tipo, caminho, content_type, nome_arquivo, tamanho_bytes, criado_em';
+  'id, execucao_id, api_key_id, tipo, caminho, content_type, nome_arquivo, tamanho_bytes, criado_em, expira_em';
 
 const TIPOS_DOCUMENTO: readonly string[] = ['pdf_oficial', 'pdf_pagina', 'print', 'boleto'];
 
@@ -61,6 +64,7 @@ function paraDocumento(linha: DocumentoLinha): Documento {
     nomeArquivo: linha.nome_arquivo,
     tamanhoBytes: linha.tamanho_bytes,
     criadoEm: linha.criado_em,
+    expiraEm: linha.expira_em,
   };
 }
 
@@ -86,10 +90,11 @@ export class DocumentosRepository {
       throw new ValidationError('Tamanho do documento deve ser um inteiro não negativo');
     }
     const criadoEm = input.criadoEm ?? agoraIso();
+    const expiraEm = input.expiraEm ?? null;
     try {
       this.banco
-        .prepare<[string, string, string, string, string, string, string, number, string]>(
-          'INSERT INTO documentos (id, execucao_id, api_key_id, tipo, caminho, content_type, nome_arquivo, tamanho_bytes, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        .prepare<[string, string, string, string, string, string, string, number, string, string | null]>(
+          'INSERT INTO documentos (id, execucao_id, api_key_id, tipo, caminho, content_type, nome_arquivo, tamanho_bytes, criado_em, expira_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         )
         .run(
           input.id,
@@ -101,6 +106,7 @@ export class DocumentosRepository {
           input.nomeArquivo,
           input.tamanhoBytes,
           criadoEm,
+          expiraEm,
         );
     } catch (erro) {
       if (ehViolacaoUnica(erro)) {
@@ -130,6 +136,26 @@ export class DocumentosRepository {
     return linhas.map(paraDocumento);
   }
 
+  listarPorIds(ids: string[]): Documento[] {
+    if (ids.length === 0) {
+      return [];
+    }
+    const lacunas = ids.map(() => '?').join(',');
+    const linhas = this.banco
+      .prepare<string[], DocumentoLinha>(
+        `SELECT ${COLUNAS} FROM documentos WHERE id IN (${lacunas})`,
+      )
+      .all(...ids);
+    const porId = new Map<string, Documento>();
+    for (const linha of linhas) {
+      porId.set(linha.id, paraDocumento(linha));
+    }
+    return ids.flatMap((id) => {
+      const documento = porId.get(id);
+      return documento === undefined ? [] : [documento];
+    });
+  }
+
   removerExpirados(criadoAntesDe: string): Documento[] {
     const remover = this.banco.transaction((): Documento[] => {
       const expirados = this.banco
@@ -139,6 +165,36 @@ export class DocumentosRepository {
         .all(criadoAntesDe);
       this.banco
         .prepare<[string]>('DELETE FROM documentos WHERE criado_em < ?')
+        .run(criadoAntesDe);
+      return expirados.map(paraDocumento);
+    });
+    return remover();
+  }
+
+  removerExpiradosEm(agoraIsoTexto: string): Documento[] {
+    const remover = this.banco.transaction((): Documento[] => {
+      const expirados = this.banco
+        .prepare<[string], DocumentoLinha>(
+          `SELECT ${COLUNAS} FROM documentos WHERE expira_em IS NOT NULL AND expira_em <= ?`,
+        )
+        .all(agoraIsoTexto);
+      this.banco
+        .prepare<[string]>('DELETE FROM documentos WHERE expira_em IS NOT NULL AND expira_em <= ?')
+        .run(agoraIsoTexto);
+      return expirados.map(paraDocumento);
+    });
+    return remover();
+  }
+
+  removerExpiradosLegados(criadoAntesDe: string): Documento[] {
+    const remover = this.banco.transaction((): Documento[] => {
+      const expirados = this.banco
+        .prepare<[string], DocumentoLinha>(
+          `SELECT ${COLUNAS} FROM documentos WHERE expira_em IS NULL AND criado_em < ?`,
+        )
+        .all(criadoAntesDe);
+      this.banco
+        .prepare<[string]>('DELETE FROM documentos WHERE expira_em IS NULL AND criado_em < ?')
         .run(criadoAntesDe);
       return expirados.map(paraDocumento);
     });

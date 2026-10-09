@@ -1,9 +1,14 @@
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Page } from 'playwright-core';
 import { z } from 'zod';
-import { BaseRobot, type ExecucaoCtx, type ResultadoRobot } from '../../base/base-robot.js';
+import {
+  BaseRobot,
+  diretorioArtefatosExecucao,
+  removerDiretoriosTemporariosDaExecucao,
+  type ExecucaoCtx,
+  type ResultadoRobot,
+} from '../../base/base-robot.js';
 import {
   analisarTextoComRotulos,
   formatarCep,
@@ -195,7 +200,7 @@ export class FichaCadastralRobot extends BaseRobot {
       await this.navegar(pagina, ctx, config);
       await this.selecionarTipoCnpj(pagina, ctx, cadeias);
       await this.preencherCnpj(pagina, ctx, cadeias, cnpj);
-      const saidaPdf = await this.submeterEObterPdf(pagina, ctx, cadeias);
+      const saidaPdf = await this.submeterEObterPdf(pagina, ctx, cadeias, cnpj);
       if ('erroPortal' in saidaPdf) {
         return {
           sucesso: false,
@@ -333,6 +338,7 @@ export class FichaCadastralRobot extends BaseRobot {
     pagina: Page,
     ctx: ExecucaoCtx,
     cadeias: Record<string, CadeiaSeletores>,
+    cnpj: string,
   ): Promise<{ caminhoPdf: string } | { erroPortal: string }> {
     exigirTempo(ctx.signal, 'submeter-consulta');
     this.emitir(ctx, 'log', 'Submetendo a consulta e aguardando o PDF oficial');
@@ -363,7 +369,7 @@ export class FichaCadastralRobot extends BaseRobot {
         this.lerErroPortal(pagina, cadeias).catch(() => ''),
       ]);
       if (descarga !== null) {
-        const diretorio = path.join(tmpdir(), 'api-sefaz-ssa', `ficha-cadastral-${Date.now()}`);
+        const diretorio = diretorioArtefatosExecucao('ficha-cadastral', ctx.execucaoId, cnpj, 'download');
         await mkdir(diretorio, { recursive: true });
         const caminhoPdf = path.join(diretorio, 'ficha-cadastral.pdf');
         await descarga.saveAs(caminhoPdf);
@@ -411,7 +417,7 @@ export class FichaCadastralRobot extends BaseRobot {
         return;
       }
       this.emitir(ctx, 'log', 'Gerando os artefatos da consulta');
-      const diretorio = path.join(tmpdir(), 'api-sefaz-ssa', `ficha-cadastral-${cnpj}`);
+      const diretorio = diretorioArtefatosExecucao('ficha-cadastral', ctx.execucaoId, cnpj);
       await mkdir(diretorio, { recursive: true });
       if (ctx.artefatos === 'print' || ctx.artefatos === 'ambos') {
         const print = await pagina.screenshot({ type: 'jpeg', quality: 70, fullPage: true });
@@ -476,22 +482,29 @@ export const executarFichaCadastral = async (
     },
     artefatos,
     signal: AbortSignal.timeout(FICHA_CADASTRAL_TIMEOUT_MS),
+    execucaoId: execucao.id,
   };
-  const resultado = await robo.executar({ cnpj }, ctx);
-  const saida: Record<string, unknown> = { sucesso: resultado.sucesso, dados: resultado.dados };
-  if (resultado.mensagem !== undefined) {
-    saida['mensagem'] = resultado.mensagem;
-  }
-  for (const arquivo of arquivos) {
-    const conteudo = await readFile(arquivo.caminho);
-    if (arquivo.tipo === 'print') {
-      saida['printBase64'] = conteudo.toString('base64');
+  try {
+    const resultado = await robo.executar({ cnpj }, ctx);
+    const saida: Record<string, unknown> = { sucesso: resultado.sucesso, dados: resultado.dados };
+    if (resultado.mensagem !== undefined) {
+      saida['mensagem'] = resultado.mensagem;
     }
-    if (arquivo.tipo === 'pdf_oficial' || arquivo.tipo === 'pdf_pagina') {
-      saida['pdfBase64'] = conteudo.toString('base64');
+    for (const arquivo of arquivos) {
+      const conteudo = await readFile(arquivo.caminho);
+      if (arquivo.tipo === 'print') {
+        saida['printBase64'] = conteudo.toString('base64');
+      }
+      if (arquivo.tipo === 'pdf_oficial' || arquivo.tipo === 'pdf_pagina') {
+        saida['pdfBase64'] = conteudo.toString('base64');
+      }
     }
+    return saida;
+  } finally {
+    await removerDiretoriosTemporariosDaExecucao(execucao.id, ['ficha-cadastral']).catch(
+      () => undefined,
+    );
   }
-  return saida;
 };
 
 registrarExecutor('ficha-cadastral', executarFichaCadastral);

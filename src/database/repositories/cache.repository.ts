@@ -19,6 +19,12 @@ export interface SalvarCacheInput {
   dados: string;
   cacheVersion: number;
   ttlMs: number;
+  /**
+   * Instante de expiração explícito (ISO). Quando informado, é usado no lugar
+   * de `agora + ttlMs`, permitindo que documentos e cache compartilhem o
+   * mesmo instante de expiração. Quando ausente, mantém o cálculo histórico.
+   */
+  expiraEm?: string;
 }
 
 interface CacheLinha {
@@ -67,7 +73,7 @@ export class CacheRepository {
       throw new ValidationError('TTL do cache deve ser positivo');
     }
     const criadoEm = agoraIso();
-    const expiraEm = new Date(Date.now() + input.ttlMs).toISOString();
+    const expiraEm = input.expiraEm ?? new Date(Date.now() + input.ttlMs).toISOString();
     const tamanhoBytes = Buffer.byteLength(input.dados, 'utf8');
     this.banco
       .prepare<[string, string, string, number, string, string, number]>(
@@ -93,6 +99,11 @@ export class CacheRepository {
       return null;
     }
     return paraEntrada(linha);
+  }
+
+  remover(chave: string): void {
+    exigirTexto(chave, 'Chave do cache é obrigatória');
+    this.banco.prepare<[string]>('DELETE FROM cache_consultas WHERE chave = ?').run(chave);
   }
 
   invalidarTipo(tipo: string): number {

@@ -4,6 +4,13 @@ export type ExecucaoStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CAN
 
 export type ArtefatosOpcao = 'nenhum' | 'pdf' | 'print' | 'ambos';
 
+/**
+ * Valor resolvido do parâmetro de controle `file` (opt-in de download binário).
+ * `principal` corresponde a `file=true`: o primeiro PDF, ou o primeiro print
+ * quando não houver PDF. Nunca compõe a chave de cache nem o payload do robô.
+ */
+export type ArquivoSolicitado = 'pdf' | 'print' | 'principal';
+
 export interface DocumentoInfo {
   id: string;
   tipo: 'pdf_oficial' | 'pdf_pagina' | 'print' | 'boleto';
@@ -24,6 +31,7 @@ export interface ResultadoAutomacao {
   dados: Record<string, unknown>;
   documentos?: DocumentoInfo[];
   mensagem?: string;
+  avisos?: string[];
 }
 
 export interface ExecucaoResposta {

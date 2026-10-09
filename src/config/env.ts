@@ -1,3 +1,5 @@
+import { dirname, isAbsolute, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 const schema = z.object({
@@ -32,3 +34,26 @@ const schema = z.object({
 export const env = schema.parse(process.env);
 
 export type Env = typeof env;
+
+// Raiz do projeto = diretório que contém o package.json (dois níveis acima de
+// src/config/env.ts). Calculada uma única vez no carregamento do módulo para
+// que caminhos relativos não dependam do cwd de quem iniciou o processo.
+const RAIZ_PROJETO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+function ancorarNaRaiz(valor: string): string {
+  if (valor === ':memory:' || isAbsolute(valor)) {
+    return valor;
+  }
+  return resolve(RAIZ_PROJETO, valor);
+}
+
+const BANCO_ABSOLUTO = ancorarNaRaiz(env.DATABASE_PATH);
+const ARMAZENAMENTO_ABSOLUTO = ancorarNaRaiz(env.STORAGE_DIR);
+
+export function caminhoBancoAbsoluto(): string {
+  return BANCO_ABSOLUTO;
+}
+
+export function diretorioArmazenamentoAbsoluto(): string {
+  return ARMAZENAMENTO_ABSOLUTO;
+}

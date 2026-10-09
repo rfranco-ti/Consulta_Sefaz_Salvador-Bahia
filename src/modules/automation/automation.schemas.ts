@@ -12,11 +12,25 @@ import { ValidationError } from '../../shared/errors/index.js';
 
 export const artefatosSchema = z.enum(['nenhum', 'pdf', 'print', 'ambos']);
 
+/**
+ * Valores aceitos pelo parâmetro de controle `file` (opt-in de download
+ * binário do artefato). `false` (padrão) mantém o JSON; `true` devolve o
+ * artefato primário (primeiro PDF, senão o primeiro print); `pdf`/`print`
+ * selecionam o primeiro documento do tipo correspondente. Chave de controle:
+ * nunca entra no payload do robô nem na chave de cache.
+ */
+export const arquivoQuerySchema = z
+  .enum(['true', 'false', 'pdf', 'print'])
+  .describe(
+    'Download binário do artefato: true (primário: primeiro PDF, senão primeiro print), pdf, print ou false (padrão, resposta JSON)',
+  );
+
 export const execucaoComumSchema = z.object({
   artefatos: artefatosSchema.default('nenhum'),
   inline: z.boolean().default(false),
   forceRefresh: z.boolean().optional(),
   idempotencyKey: z.string().min(8).max(128).optional(),
+  file: arquivoQuerySchema.optional(),
 });
 
 export const tipoParamSchema = z.enum(TIPOS_AUTOMACAO);

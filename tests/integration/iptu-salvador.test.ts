@@ -240,6 +240,7 @@ describe('robot iptu-salvador', () => {
           },
           artefatos: 'pdf',
           signal: AbortSignal.timeout(60000),
+          execucaoId: 'exe_pdf_nome',
         };
         const robo = new IptuSalvadorRobot();
         const resultado = await robo.executar({ numeroIptu: NUMERO_MASCARA }, ctx);

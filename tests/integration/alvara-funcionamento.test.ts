@@ -1,9 +1,9 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Browser } from 'playwright-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { diretorioArtefatosExecucao } from '../../src/automations/base/base-robot.js';
 import {
   registrarExtratorTextoPdf,
   removerExtratorTextoPdf,
@@ -420,10 +420,11 @@ describe('robot alvara-funcionamento', () => {
 
   it('prossegue com sucesso quando a geração de artefatos falha', { timeout: 90000 }, async () => {
     const { sessao, fechar } = await abrirSessao();
-    const diretorio = path.join(
-      tmpdir(),
-      'api-sefaz-ssa',
-      `alvara-funcionamento-${CNPJ_DIGITOS}-${CGA_DIGITOS}`,
+    const diretorio = diretorioArtefatosExecucao(
+      'alvara-funcionamento',
+      'exe_artefatos_falham',
+      CNPJ_DIGITOS,
+      CGA_DIGITOS,
     );
     await rm(diretorio, { recursive: true, force: true });
     await mkdir(path.dirname(diretorio), { recursive: true });

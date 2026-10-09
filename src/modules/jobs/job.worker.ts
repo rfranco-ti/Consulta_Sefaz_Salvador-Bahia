@@ -68,6 +68,13 @@ export class WorkerFila implements JobWorker {
   private readonly intervaloVarreduraMs: number;
   private readonly timeoutSemaforoMs: number;
   private readonly logger: Logger;
+  private readonly aoConcluir:
+    | ((
+        execucaoId: string,
+        resultado: Record<string, unknown>,
+        duracaoMs: number,
+      ) => Promise<void> | void)
+    | undefined;
   private readonly canceladas = new Set<string>();
   private readonly emAndamento = new Set<Promise<void>>();
   private cicloAtual: Promise<void> | null = null;
@@ -89,6 +96,7 @@ export class WorkerFila implements JobWorker {
     this.intervaloVarreduraMs = opcoes.intervaloVarreduraMs ?? INTERVALO_VARREDURA_PADRAO_MS;
     this.timeoutSemaforoMs = opcoes.timeoutSemaforoMs ?? TIMEOUT_SEMAFORO_PADRAO_MS;
     this.logger = opcoes.logger ?? loggerPadrao;
+    this.aoConcluir = opcoes.aoConcluir;
   }
 
   async iniciar(): Promise<void> {
@@ -306,8 +314,22 @@ export class WorkerFila implements JobWorker {
     }
   }
 
-  private concluir(id: string, resultado: ResultadoExecutor, inicio: number): Execucao {
+  private async concluir(id: string, resultado: ResultadoExecutor, inicio: number): Promise<Execucao> {
     const duracao = Math.max(0, this.agoraMs() - inicio);
+    const finalizar = this.aoConcluir;
+    if (finalizar !== undefined) {
+      try {
+        await finalizar(id, resultado, duracao);
+      } catch (erro) {
+        return this.resolverConflitoFinal(id, erro);
+      }
+      const atual = this.repo.buscarPorId(id);
+      if (atual === null) {
+        throw new NotFoundError('Execução não encontrada');
+      }
+      this.publicarFinal(id, atual.status, null, atual.attempts);
+      return atual;
+    }
     try {
       const final = this.repo.marcarSucesso(id, JSON.stringify(resultado), duracao);
       this.publicarFinal(id, 'SUCCESS', null, final.attempts);

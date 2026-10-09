@@ -62,4 +62,17 @@ export interface OpcoesWorker {
   intervaloVarreduraMs?: number;
   timeoutSemaforoMs?: number;
   logger?: Logger;
+  /**
+   * Chamado na conclusão de uma execução com o resultado bruto do robô.
+   * Quando ausente, o worker persiste via `ExecucoesRepository.marcarSucesso`
+   * (comportamento histórico). Em produção, o servidor injeta uma função que
+   * delega para `AutomationService.finalizar`, que persiste artefatos em
+   * disco/`documentos` e atualiza o cache. Erros `ConflictError` lançados pelo
+   * callback seguem o mesmo caminho de `resolverConflitoFinal`.
+   */
+  aoConcluir?: (
+    execucaoId: string,
+    resultado: Record<string, unknown>,
+    duracaoMs: number,
+  ) => Promise<void> | void;
 }

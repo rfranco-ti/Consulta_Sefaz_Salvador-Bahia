@@ -8,13 +8,28 @@ import { registrarExtratorTextoPdf } from '../automations/base/ocr.js';
 import { cadeiaExtracaoTextoPdf } from '../automations/base/ocr/extracao-pdf.js';
 import { registrarResolvedorCaptcha } from '../automations/base/captcha.js';
 import { resolverCaptchaLocal } from '../automations/base/captcha/resolvedor.js';
+import { criarAutomationService } from '../modules/automation/automation.service.js';
 import { buildApp } from './app.js';
 
 export async function startServer(): Promise<FastifyInstance> {
   registrarExtratorTextoPdf(cadeiaExtracaoTextoPdf);
   registrarResolvedorCaptcha(resolverCaptchaLocal);
   const app = await buildApp();
-  await iniciarWorker({ banco: db(), filaTimeoutSeg: env.FILA_TIMEOUT_SEG });
+  // A conclusão do worker passa por `AutomationService.finalizar` (persiste
+  // artefatos em disco/`documentos` e atualiza o cache) em vez do
+  // `marcarSucesso` cru. Não há ciclo de construção: o serviço não depende do
+  // worker, então a instância é criada antes do worker e o callback só é
+  // invocado em tempo de execução. Nota: `buildApp()` cria sua própria
+  // instância do serviço; ambas compartilham o mesmo SQLite (fonte da
+  // verdade) e os caches em memória convergem por leitura no SQLite.
+  const servicoFinalizacao = criarAutomationService({ banco: db() });
+  await iniciarWorker({
+    banco: db(),
+    filaTimeoutSeg: env.FILA_TIMEOUT_SEG,
+    aoConcluir: async (execucaoId, resultado, duracaoMs) => {
+      await servicoFinalizacao.finalizar(execucaoId, resultado, duracaoMs);
+    },
+  });
   iniciarHigiene({
     banco: db(),
     diretorioArmazenamento: env.STORAGE_DIR,

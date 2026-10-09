@@ -1,9 +1,14 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Page } from 'playwright-core';
 import { z } from 'zod';
-import { BaseRobot, type ExecucaoCtx, type ResultadoRobot } from '../../base/base-robot.js';
+import {
+  BaseRobot,
+  diretorioArtefatosExecucao,
+  removerDiretoriosTemporariosDaExecucao,
+  type ExecucaoCtx,
+  type ResultadoRobot,
+} from '../../base/base-robot.js';
 import { localizarPorChave, type CadeiaSeletores } from '../../base/seletores.js';
 import type { Execucao } from '../../../database/index.js';
 import type { BrowserSession } from '../../../modules/browser/browser.types.js';
@@ -453,7 +458,7 @@ export class SefazBahiaInscricaoRobot extends BaseRobot {
     }
     this.emitir(ctx, 'log', 'Gerando os artefatos da consulta');
     try {
-      const diretorio = path.join(tmpdir(), 'api-sefaz-ssa', `sefaz-bahia-inscricao-${inscricaoEstadual}`);
+      const diretorio = diretorioArtefatosExecucao('sefaz-bahia-inscricao', ctx.execucaoId, inscricaoEstadual);
       await mkdir(diretorio, { recursive: true });
       if (ctx.artefatos === 'print' || ctx.artefatos === 'ambos') {
         const print = await pagina.screenshot({ type: 'jpeg', quality: 70, fullPage: true });
@@ -468,7 +473,7 @@ export class SefazBahiaInscricaoRobot extends BaseRobot {
         ctx.registrarArquivo('pdf_pagina', caminhoPdf, 'application/pdf');
       }
     } catch (erro) {
-      throw normalizarErro('gerar-artefatos', erro);
+      this.emitir(ctx, 'warn', `Falha ao gerar artefatos: ${mensagemDeErro(erro)} — seguindo sem artefatos.`);
     }
   }
 }
@@ -519,22 +524,29 @@ export const executarSefazBahiaInscricao = async (
     },
     artefatos,
     signal: AbortSignal.timeout(SEFAZ_BAHIA_INSCRICAO_TIMEOUT_MS),
+    execucaoId: execucao.id,
   };
-  const resultado = await robo.executar({ inscricaoEstadual }, ctx);
-  const saida: Record<string, unknown> = { sucesso: resultado.sucesso, dados: resultado.dados };
-  if (resultado.mensagem !== undefined) {
-    saida['mensagem'] = resultado.mensagem;
-  }
-  for (const arquivo of arquivos) {
-    const conteudo = await readFile(arquivo.caminho);
-    if (arquivo.tipo === 'print') {
-      saida['printBase64'] = conteudo.toString('base64');
+  try {
+    const resultado = await robo.executar({ inscricaoEstadual }, ctx);
+    const saida: Record<string, unknown> = { sucesso: resultado.sucesso, dados: resultado.dados };
+    if (resultado.mensagem !== undefined) {
+      saida['mensagem'] = resultado.mensagem;
     }
-    if (arquivo.tipo === 'pdf_pagina') {
-      saida['pdfBase64'] = conteudo.toString('base64');
+    for (const arquivo of arquivos) {
+      const conteudo = await readFile(arquivo.caminho);
+      if (arquivo.tipo === 'print') {
+        saida['printBase64'] = conteudo.toString('base64');
+      }
+      if (arquivo.tipo === 'pdf_pagina') {
+        saida['pdfBase64'] = conteudo.toString('base64');
+      }
     }
+    return saida;
+  } finally {
+    await removerDiretoriosTemporariosDaExecucao(execucao.id, ['sefaz-bahia-inscricao']).catch(
+      () => undefined,
+    );
   }
-  return saida;
 };
 
 registrarExecutor('sefaz-bahia-inscricao', executarSefazBahiaInscricao);

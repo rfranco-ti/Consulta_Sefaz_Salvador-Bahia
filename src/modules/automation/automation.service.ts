@@ -4,10 +4,10 @@ import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import type { Logger } from 'pino';
 import { env } from '../../config/env.js';
-import { CACHE_VERSION } from '../../config/cache.js';
+import { CACHE_VERSION, cacheConfig } from '../../config/cache.js';
 import { EXECUCOES_ATIVAS_POR_KEY, WAIT_MAX_SEG } from '../../config/constants.js';
 import type { TipoAutomacao } from '../../automations/registry.js';
-import { db, DocumentosRepository } from '../../database/index.js';
+import { db, DocumentosRepository, type Documento } from '../../database/index.js';
 import {
   ConflictError,
   InternalError,
@@ -47,6 +47,7 @@ export interface OpcoesAutomationService {
   gerarId?: (prefixo: 'exe' | 'doc') => string;
   diretorioArmazenamento?: string;
   logger?: Logger;
+  agora?: () => number;
 }
 
 interface VooResolvido {
@@ -93,6 +94,120 @@ function nomeSeguro(valor: string): string {
   return valor.replace(/[^a-zA-Z0-9._-]/g, '-');
 }
 
+/**
+ * Artefatos solicitados na execução, lidos do payload armazenado
+ * (`{ ...params, artefatos }`). Devolve `null` quando o payload não traz
+ * uma opção válida — nesse caso nenhuma advertência é sintetizada.
+ */
+function lerArtefatosSolicitados(payload: string): ArtefatosOpcao | null {
+  try {
+    const bruto: unknown = JSON.parse(payload) as unknown;
+    if (!ehRegistro(bruto)) {
+      return null;
+    }
+    const valor = bruto['artefatos'];
+    if (valor === 'nenhum' || valor === 'pdf' || valor === 'print' || valor === 'ambos') {
+      return valor;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Mensagem factual exibida ao usuário final quando artefatos foram
+ * solicitados mas nenhum documento foi persistido. Os nomes derivam do que
+ * foi efetivamente pedido: `pdf` → "(pdf)", `print` → "(print)",
+ * `ambos` → "(pdf, print)". Devolve `null` para `nenhum`.
+ */
+function avisoArtefatosAusentes(artefatos: ArtefatosOpcao): string | null {
+  if (artefatos === 'nenhum') {
+    return null;
+  }
+  const nomes = artefatos === 'ambos' ? 'pdf, print' : artefatos;
+  return `Artefatos solicitados (${nomes}) não foram gerados nesta execução.`;
+}
+
+function ehAvisosValidos(valor: unknown): valor is string[] {
+  return (
+    Array.isArray(valor) &&
+    valor.length > 0 &&
+    valor.every((item) => typeof item === 'string' && item.length > 0)
+  );
+}
+
+/**
+ * Metadados de documento carregados no cache. Nunca contém bytes do arquivo:
+ * apenas referências resolvidas contra a tabela `documentos` no momento do
+ * acerto, descartando referências cujas linhas expiraram/foram removidas.
+ */
+export interface DocumentoReferencia {
+  id: string;
+  tipo: string;
+  nome: string;
+  contentType: string;
+  tamanhoBytes: number;
+  url: string;
+  execucaoId: string;
+}
+
+function paraDocumentoInfo(documento: Documento): DocumentoInfo {
+  return {
+    id: documento.id,
+    tipo: documento.tipo,
+    nome: documento.nomeArquivo,
+    contentType: documento.contentType,
+    tamanhoBytes: documento.tamanhoBytes,
+    url: `/v1/documentos/${documento.id}`,
+  };
+}
+
+function paraReferencia(documento: Documento): DocumentoReferencia {
+  return { ...paraDocumentoInfo(documento), execucaoId: documento.execucaoId };
+}
+
+function extrairReferencias(valor: unknown): DocumentoReferencia[] | null {
+  if (!ehRegistro(valor)) {
+    return null;
+  }
+  const lista = valor['documentos'];
+  if (lista === undefined) {
+    return null;
+  }
+  if (!Array.isArray(lista)) {
+    return null;
+  }
+  const refs: DocumentoReferencia[] = [];
+  for (const item of lista) {
+    if (!ehRegistro(item)) {
+      return null;
+    }
+    const { id, tipo, nome, contentType, tamanhoBytes, url, execucaoId } = item as Record<
+      string,
+      unknown
+    >;
+    if (
+      typeof id !== 'string' ||
+      id.length === 0 ||
+      typeof execucaoId !== 'string' ||
+      execucaoId.length === 0
+    ) {
+      return null;
+    }
+    refs.push({
+      id,
+      tipo: typeof tipo === 'string' ? tipo : '',
+      nome: typeof nome === 'string' ? nome : '',
+      contentType: typeof contentType === 'string' ? contentType : '',
+      tamanhoBytes: typeof tamanhoBytes === 'number' ? tamanhoBytes : 0,
+      url: typeof url === 'string' ? url : `/v1/documentos/${id}`,
+      execucaoId,
+    });
+  }
+  return refs;
+}
+
 export class AutomationService {
   private readonly repositorio: AutomationRepository;
   private readonly documentos: DocumentosRepository;
@@ -101,6 +216,7 @@ export class AutomationService {
   private readonly gerarId: (prefixo: 'exe' | 'doc') => string;
   private readonly diretorioArmazenamento: string;
   private readonly logger: Logger;
+  private readonly agora: () => number;
 
   constructor(opcoes: OpcoesAutomationService) {
     this.repositorio =
@@ -111,6 +227,7 @@ export class AutomationService {
     this.gerarId = opcoes.gerarId ?? gerarIdPadrao;
     this.diretorioArmazenamento = opcoes.diretorioArmazenamento ?? env.STORAGE_DIR;
     this.logger = opcoes.logger ?? loggerPadrao.child({ modulo: 'automation' });
+    this.agora = opcoes.agora ?? Date.now;
   }
 
   async iniciar(input: IniciarExecucaoInput): Promise<ExecucaoResposta> {
@@ -161,16 +278,58 @@ export class AutomationService {
       await this.falhar(execucaoId, new InternalError('Resultado da automação inválido'));
       throw new InternalError('Resultado da automação inválido');
     }
-    const documentos = await this.persistirBlobs(registro, extrairBlobs(resultado));
+    // Instante único de expiração: documentos e cache expiram juntos, de modo
+    // que um PDF nunca expire antes da entrada de cache que o produziu.
+    const expiraEm = new Date(this.agora() + cacheConfig(registro.tipo).ttlMs).toISOString();
+    const documentos = await this.persistirBlobs(registro, extrairBlobs(resultado), expiraEm);
     const enxuto: Record<string, unknown> = { sucesso, dados };
     if (typeof mensagem === 'string' && mensagem.length > 0) {
       enxuto['mensagem'] = mensagem;
+    }
+    // Advertência sintetizada no serviço — o único lugar com o quadro
+    // completo (resultado + artefatos pedidos + documentos persistidos).
+    // Condição: execução com `sucesso === true`, artefatos pedidos
+    // (`artefatos !== 'nenhum'` no payload armazenado) e ZERO documentos
+    // persistidos. Vale para todos os robôs, mesmo os que não emitem o
+    // warn de progresso. Execuções FAILED nunca recebem aviso (o erro já
+    // explica) e `sucesso === false` também não (achado negativo do portal).
+    if (sucesso && documentos.length === 0) {
+      const solicitados = lerArtefatosSolicitados(registro.payload);
+      if (solicitados !== null) {
+        const aviso = avisoArtefatosAusentes(solicitados);
+        if (aviso !== null) {
+          enxuto['avisos'] = [aviso];
+        }
+      }
     }
     this.repositorio.marcarSucesso(execucaoId, JSON.stringify(enxuto), duracaoMs);
     if (sucesso) {
       const params = this.paramsArmazenados(registro.payload);
       if (params !== null) {
-        this.cache.gravarSucesso(registro.tipo, params, enxuto);
+        // Decisão de cache: `enxuto` (incluindo `avisos` quando presente) é
+        // gravado integralmente, de modo que o acerto de cache volta a
+        // expor a advertência a cada hit até o TTL expirar. É honesto — a
+        // entrada cacheada continua sem artefatos — ainda que possa parecer
+        // repetitivo; a alternativa (omitir do cache) reintroduziria a
+        // falha silenciosa justamente no caminho mais usado. Ver
+        // `propagarSucessoParaCache`, que copia `avisos` do resultado
+        // armazenado pelo mesmo critério para não divergir deste bloco.
+        this.cache.gravarSucesso(
+          registro.tipo,
+          params,
+          {
+            ...enxuto,
+            ...(documentos.length === 0
+              ? {}
+              : {
+                  documentos: documentos.map((info) => ({
+                    ...info,
+                    execucaoId: registro.id,
+                  })),
+                }),
+          },
+          expiraEm,
+        );
       }
     }
     this.canal.publicarFinal({
@@ -253,6 +412,13 @@ export class AutomationService {
         return this.resolverAcerto(input, params, artefatos, acerto);
       }
     }
+    // forceRefresh pula a leitura SEM invalidar a entrada anterior: o novo
+    // voo substitui a entrada via `finalizar` → `gravarSucesso`
+    // (INSERT OR REPLACE) somente ao concluir com sucesso. Se o voo forçado
+    // FALHAR, `falhar` nunca toca no cache e a entrada anterior continua
+    // servindo os demais clientes (sem perda de disponibilidade). Falhas
+    // nunca são cacheadas. A junção ao voo em andamento abaixo é mantida de
+    // propósito: evita uma segunda ida ao portal para os mesmos parâmetros.
     if (input.idempotencyKey !== undefined) {
       this.validarIdempotencia(input.idempotencyKey);
       const existente = this.repositorio.porIdempotencia(input.apiKeyId, input.idempotencyKey);
@@ -331,6 +497,26 @@ export class AutomationService {
       },
       JSON.stringify(acerto.dados),
     );
+    // O cache é global entre chaves de API, mas o download exige participação
+    // na execução (routes/documentos). Concede participação à chave
+    // solicitante na execução sintética e em cada execução originadora dos
+    // documentos referenciados, reutilizando o mecanismo existente
+    // `execucoes_participantes` — nenhum mecanismo novo foi inventado.
+    this.repositorio.adicionarParticipante(id, input.apiKeyId);
+    const refs = extrairReferencias(acerto.dados);
+    if (refs !== null) {
+      const origens = new Set(refs.map((ref) => ref.execucaoId));
+      for (const origem of origens) {
+        try {
+          this.repositorio.adicionarParticipante(origem, input.apiKeyId);
+        } catch (erro) {
+          this.logger.warn(
+            { execucaoId: id, origem, err: erro },
+            'Participação na execução originadora do cache ignorada',
+          );
+        }
+      }
+    }
     const base = this.mapear(registro);
     return {
       resposta: {
@@ -354,6 +540,15 @@ export class AutomationService {
     if (params === null) {
       return;
     }
+    const ttlMs = cacheConfig(registro.tipo).ttlMs;
+    const finalizadoMs = Date.parse(registro.finalizadoEm ?? '');
+    // Age-gate: sondar uma execução antiga não pode ressuscitar o cache com
+    // TTL cheio (staleness ilimitada). Além disso o cache nunca pode
+    // sobreviver aos documentos que referencia, então grava com a expiração
+    // ORIGINAL (finalizadoEm + TTL), nunca `agora + TTL`.
+    if (!Number.isFinite(finalizadoMs) || finalizadoMs + ttlMs <= this.agora()) {
+      return;
+    }
     let bruto: unknown;
     try {
       bruto = JSON.parse(registro.resultado ?? '') as unknown;
@@ -368,11 +563,30 @@ export class AutomationService {
     if (typeof mensagem === 'string' && mensagem.length > 0) {
       gravavel['mensagem'] = mensagem;
     }
+    // Consistência com `finalizar`: copia `avisos` do resultado armazenado
+    // pelo mesmo critério, para que a repopulação do cache via sondagem
+    // (`consultar`/`consultarSincrona` em execução antiga) produza o mesmo
+    // payload que a gravação original. Sem isto, sondar uma execução sem
+    // artefatos ressuscitaria o cache SEM a advertência, divergindo de
+    // `finalizar` e reintroduzindo a falha silenciosa no acerto seguinte.
+    const avisosArmazenados = bruto['avisos'];
+    if (ehAvisosValidos(avisosArmazenados)) {
+      gravavel['avisos'] = [...avisosArmazenados];
+    }
+    const referenciaveis = this.documentos.listarPorExecucao(registro.id);
+    if (referenciaveis.length > 0) {
+      gravavel['documentos'] = referenciaveis.map(paraReferencia);
+    }
     try {
       if (this.cache.ler(registro.tipo, params) !== null) {
         return;
       }
-      this.cache.gravarSucesso(registro.tipo, params, gravavel);
+      this.cache.gravarSucesso(
+        registro.tipo,
+        params,
+        gravavel,
+        new Date(finalizadoMs + ttlMs).toISOString(),
+      );
     } catch (erro) {
       this.logger.warn({ execucaoId: registro.id, err: erro }, 'Resultado ao vivo fora do cache');
     }
@@ -443,10 +657,11 @@ export class AutomationService {
   private async persistirBlobs(
     registro: ExecucaoRegistro,
     blobs: BlobArtefato[],
+    expiraEm: string,
   ): Promise<DocumentoInfo[]> {
     const infos: DocumentoInfo[] = [];
     for (const blob of blobs) {
-      const info = await this.persistirBlob(registro, blob);
+      const info = await this.persistirBlob(registro, blob, expiraEm);
       if (info !== null) {
         infos.push(info);
       }
@@ -457,6 +672,7 @@ export class AutomationService {
   private async persistirBlob(
     registro: ExecucaoRegistro,
     blob: BlobArtefato,
+    expiraEm: string,
   ): Promise<DocumentoInfo | null> {
     try {
       const conteudo = Buffer.from(blob.base64, 'base64');
@@ -475,6 +691,7 @@ export class AutomationService {
         contentType: blob.contentType,
         nomeArquivo: nome,
         tamanhoBytes: conteudo.length,
+        expiraEm,
       });
       return {
         id: documento.id,
@@ -571,19 +788,49 @@ export class AutomationService {
       throw new InternalError('Resultado da execução inválido');
     }
     const mensagem = bruto['mensagem'];
+    const avisosBrutos = bruto['avisos'];
+    // A advertência só é exposta quando a execução atual pediu artefatos:
+    // um acerto de cache com `artefatos: 'nenhum'` sobre uma entrada
+    // artefato-less suprime o aviso herdado (nada foi pedido, nada falta).
+    // O payload sintético do acerto carrega os artefatos do NOVO pedido, de
+    // modo que a filtragem pelo payload atual preserva o invariante
+    // `nenhum` ⇒ sem aviso em todos os caminhos, sem perder o aviso quando
+    // os artefatos foram de fato solicitados.
+    const solicitados = lerArtefatosSolicitados(registro.payload);
+    const exporAvisos =
+      solicitados !== null && solicitados !== 'nenhum' && ehAvisosValidos(avisosBrutos);
     return {
       sucesso: bruto['sucesso'],
       dados: bruto['dados'],
-      documentos: this.documentos.listarPorExecucao(registro.id).map((documento) => ({
-        id: documento.id,
-        tipo: documento.tipo,
-        nome: documento.nomeArquivo,
-        contentType: documento.contentType,
-        tamanhoBytes: documento.tamanhoBytes,
-        url: `/v1/documentos/${documento.id}`,
-      })),
+      documentos: this.resolverDocumentosResultado(bruto, registro.id),
       ...(typeof mensagem === 'string' && mensagem.length > 0 ? { mensagem } : {}),
+      ...(exporAvisos ? { avisos: [...(avisosBrutos as string[])] } : {}),
     };
+  }
+
+  /**
+   * Resolve os documentos do resultado. Quando o resultado armazenado carrega
+   * referências de documentos vindas do cache (execuções sintéticas de acerto),
+   * resolve cada referência contra as linhas vivas via `listarPorIds`,
+   * descartando referências expiradas/removidas para nunca emitir URL que
+   * responde 404. Caso contrário, lista os documentos da própria execução.
+   */
+  private resolverDocumentosResultado(
+    bruto: Record<string, unknown>,
+    execucaoId: string,
+  ): DocumentoInfo[] {
+    const refs = extrairReferencias(bruto);
+    if (refs === null) {
+      return this.documentos.listarPorExecucao(execucaoId).map(paraDocumentoInfo);
+    }
+    if (refs.length === 0) {
+      return [];
+    }
+    const agora = new Date().toISOString();
+    return this.documentos
+      .listarPorIds(refs.map((ref) => ref.id))
+      .filter((documento) => documento.expiraEm === null || documento.expiraEm > agora)
+      .map(paraDocumentoInfo);
   }
 
   private mapearErro(registro: ExecucaoRegistro): { code: string; message: string; etapa?: string } {

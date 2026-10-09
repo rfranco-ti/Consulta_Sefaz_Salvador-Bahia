@@ -2,13 +2,18 @@ import type Database from 'better-sqlite3';
 import { DatabaseError } from '../../shared/errors/index.js';
 import { MIGRACAO_IDEMPOTENCY_KEY } from './002-idempotency-key.js';
 import { MIGRACAO_SCHEMA_INICIAL } from './001-schema-inicial.js';
+import { MIGRACAO_DOCUMENTOS_EXPIRA_EM } from './003-documentos-expira-em.js';
 
 export interface Migracao {
   nome: string;
   sql: string;
 }
 
-const MIGRACOES: Migracao[] = [MIGRACAO_SCHEMA_INICIAL, MIGRACAO_IDEMPOTENCY_KEY];
+const MIGRACOES: Migracao[] = [
+  MIGRACAO_SCHEMA_INICIAL,
+  MIGRACAO_IDEMPOTENCY_KEY,
+  MIGRACAO_DOCUMENTOS_EXPIRA_EM,
+];
 
 export function listarMigrationsAplicadas(banco: Database.Database): string[] {
   try {

@@ -1,11 +1,17 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type Database from 'better-sqlite3';
 import { pino } from 'pino';
 import { describe, expect, it } from 'vitest';
 import { CacheRepository } from '../../src/database/repositories/cache.repository.js';
 import { DocumentosRepository } from '../../src/database/repositories/documentos.repository.js';
+import {
+  caminhoBancoAbsoluto,
+  diretorioArmazenamentoAbsoluto,
+  env,
+} from '../../src/config/env.js';
 import {
   executarHigiene,
   higieneAtiva,
@@ -43,7 +49,14 @@ function semearCache(banco: Database.Database): CacheRepository {
 function semearDocumento(
   banco: Database.Database,
   armazenamento: string,
-  parcial: { docId: string; execId: string; apiKeyId: string; nome: string; criadoEm: string },
+  parcial: {
+    docId: string;
+    execId: string;
+    apiKeyId: string;
+    nome: string;
+    criadoEm: string;
+    expiraEm?: string | null;
+  },
 ): void {
   criarExecucaoPendente(banco, { id: parcial.execId, apiKeyId: parcial.apiKeyId });
   mkdirSync(join(armazenamento, parcial.execId), { recursive: true });
@@ -58,6 +71,7 @@ function semearDocumento(
     nomeArquivo: parcial.nome,
     tamanhoBytes: 18,
     criadoEm: parcial.criadoEm,
+    expiraEm: parcial.expiraEm ?? null,
   });
 }
 
@@ -198,6 +212,148 @@ describe('higiene', () => {
     } finally {
       storage.limpar();
       temp.limpar();
+    }
+  });
+
+  it('remove documentos pela expira_em exata e preserva os vigentes', () => {
+    const temp = criarBancoTemporario();
+    const storage = criarArmazenamento();
+    try {
+      const { id } = criarChaveApi(temp.banco);
+      semearDocumento(temp.banco, storage.diretorio, {
+        docId: 'doc_expirado',
+        execId: 'exe_expirada',
+        apiKeyId: id,
+        nome: 'expirado.jpg',
+        criadoEm: '2026-06-14T00:00:00.000Z',
+        expiraEm: '2026-06-15T11:59:59.000Z',
+      });
+      semearDocumento(temp.banco, storage.diretorio, {
+        docId: 'doc_vigente',
+        execId: 'exe_vigente',
+        apiKeyId: id,
+        nome: 'vigente.jpg',
+        criadoEm: '2026-01-01T00:00:00.000Z',
+        expiraEm: '2026-06-15T12:00:01.000Z',
+      });
+      const resumo = executarHigiene({
+        banco: temp.banco,
+        diretorioArmazenamento: storage.diretorio,
+        ttlDiasDocumentos: TTL_DIAS,
+        agora: () => AGORA,
+      });
+      expect(resumo.documentosRemovidos).toBe(1);
+      expect(resumo.arquivosRemovidos).toBe(1);
+      expect(resumo.arquivosAusentes).toBe(0);
+      const repo = new DocumentosRepository(temp.banco);
+      expect(repo.buscarPorId('doc_expirado')).toBeNull();
+      expect(repo.buscarPorId('doc_vigente')).not.toBeNull();
+      expect(existsSync(join(storage.diretorio, 'exe_expirada', 'expirado.jpg'))).toBe(false);
+      expect(existsSync(join(storage.diretorio, 'exe_vigente', 'vigente.jpg'))).toBe(true);
+    } finally {
+      storage.limpar();
+      temp.limpar();
+    }
+  });
+
+  it('remove documentos legados sem expira_em pela regra de idade', () => {
+    const temp = criarBancoTemporario();
+    const storage = criarArmazenamento();
+    try {
+      const { id } = criarChaveApi(temp.banco);
+      semearDocumento(temp.banco, storage.diretorio, {
+        docId: 'doc_legado',
+        execId: 'exe_legada',
+        apiKeyId: id,
+        nome: 'legado.jpg',
+        criadoEm: '2026-01-01T00:00:00.000Z',
+        expiraEm: null,
+      });
+      expect(new DocumentosRepository(temp.banco).buscarPorId('doc_legado')?.expiraEm).toBeNull();
+      const resumo = executarHigiene({
+        banco: temp.banco,
+        diretorioArmazenamento: storage.diretorio,
+        ttlDiasDocumentos: TTL_DIAS,
+        agora: () => AGORA,
+      });
+      expect(resumo.documentosRemovidos).toBe(1);
+      expect(resumo.arquivosRemovidos).toBe(1);
+      expect(new DocumentosRepository(temp.banco).buscarPorId('doc_legado')).toBeNull();
+      expect(existsSync(join(storage.diretorio, 'exe_legada', 'legado.jpg'))).toBe(false);
+    } finally {
+      storage.limpar();
+      temp.limpar();
+    }
+  });
+
+  it('limpezas de cache e de documentos sao independentes', () => {
+    const temp = criarBancoTemporario();
+    const storage = criarArmazenamento();
+    try {
+      const { id } = criarChaveApi(temp.banco);
+      const cache = semearCache(temp.banco);
+      semearDocumento(temp.banco, storage.diretorio, {
+        docId: 'doc_vigente',
+        execId: 'exe_vigente',
+        apiKeyId: id,
+        nome: 'vigente.jpg',
+        criadoEm: '2026-06-14T00:00:00.000Z',
+        expiraEm: '2026-07-01T00:00:00.000Z',
+      });
+      const primeira = executarHigiene({
+        banco: temp.banco,
+        diretorioArmazenamento: storage.diretorio,
+        ttlDiasDocumentos: TTL_DIAS,
+        agora: () => AGORA,
+      });
+      expect(primeira.cacheRemovido).toBe(1);
+      expect(primeira.documentosRemovidos).toBe(0);
+      expect(cache.obter('chave_velha')).toBeNull();
+      expect(new DocumentosRepository(temp.banco).buscarPorId('doc_vigente')).not.toBeNull();
+
+      semearDocumento(temp.banco, storage.diretorio, {
+        docId: 'doc_expirado',
+        execId: 'exe_expirada',
+        apiKeyId: id,
+        nome: 'expirado.jpg',
+        criadoEm: '2026-06-14T00:00:00.000Z',
+        expiraEm: '2026-06-01T00:00:00.000Z',
+      });
+      const segunda = executarHigiene({
+        banco: temp.banco,
+        diretorioArmazenamento: storage.diretorio,
+        ttlDiasDocumentos: TTL_DIAS,
+        agora: () => AGORA,
+      });
+      expect(segunda.cacheRemovido).toBe(0);
+      expect(segunda.documentosRemovidos).toBe(1);
+      expect(cache.obter('chave_nova')).not.toBeNull();
+      expect(new DocumentosRepository(temp.banco).buscarPorId('doc_expirado')).toBeNull();
+    } finally {
+      storage.limpar();
+      temp.limpar();
+    }
+  });
+
+  it('resolve caminhos absolutos ancorados na raiz do projeto', () => {
+    const raiz = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+    const bancoAntes = caminhoBancoAbsoluto();
+    const armazenamentoAntes = diretorioArmazenamentoAbsoluto();
+    expect(isAbsolute(bancoAntes)).toBe(true);
+    expect(isAbsolute(armazenamentoAntes)).toBe(true);
+    if (env.DATABASE_PATH !== ':memory:') {
+      expect(bancoAntes).toBe(resolve(raiz, env.DATABASE_PATH));
+    }
+    expect(armazenamentoAntes).toBe(resolve(raiz, env.STORAGE_DIR));
+    const original = process.cwd();
+    const outro = mkdtempSync(join(tmpdir(), 'higiene-cwd-'));
+    try {
+      process.chdir(outro);
+      expect(caminhoBancoAbsoluto()).toBe(bancoAntes);
+      expect(diretorioArmazenamentoAbsoluto()).toBe(armazenamentoAntes);
+    } finally {
+      process.chdir(original);
+      rmSync(outro, { recursive: true, force: true });
     }
   });
 

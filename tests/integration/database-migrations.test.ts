@@ -89,6 +89,7 @@ describe('migrations', () => {
         'nome_arquivo',
         'tamanho_bytes',
         'criado_em',
+        'expira_em',
       ]);
       expect(colunasDe(banco, 'cache_consultas')).toEqual([
         'chave',
@@ -116,6 +117,7 @@ describe('migrations', () => {
       expect(linhas.map((linha) => linha.name)).toEqual([
         'idx_cache_expira_em',
         'idx_cache_tipo',
+        'idx_documentos_expira_em',
         'idx_execucoes_chave_status',
         'idx_execucoes_criado_em',
         'idx_execucoes_idempotencia',
@@ -133,6 +135,7 @@ describe('migrations', () => {
       expect(listarMigrationsAplicadas(banco)).toEqual([
         '001-schema-inicial',
         '002-idempotency-key',
+        '003-documentos-expira-em',
       ]);
     } finally {
       limpar();
@@ -149,6 +152,7 @@ describe('migrations', () => {
       expect(listarMigrationsAplicadas(banco)).toEqual([
         '001-schema-inicial',
         '002-idempotency-key',
+        '003-documentos-expira-em',
       ]);
     } finally {
       limpar();
@@ -184,6 +188,7 @@ describe('migrations', () => {
         expect(aplicarMigrations(outro)).toEqual([
           '001-schema-inicial',
           '002-idempotency-key',
+          '003-documentos-expira-em',
         ]);
         expect(nomesTabelas(outro)).toContain('execucoes');
       } finally {

@@ -1,9 +1,14 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Page } from 'playwright-core';
 import { z } from 'zod';
-import { BaseRobot, type ExecucaoCtx, type ResultadoRobot } from '../../base/base-robot.js';
+import {
+  BaseRobot,
+  diretorioArtefatosExecucao,
+  removerDiretoriosTemporariosDaExecucao,
+  type ExecucaoCtx,
+  type ResultadoRobot,
+} from '../../base/base-robot.js';
 import { localizarPorChave, type CadeiaSeletores } from '../../base/seletores.js';
 import type { Execucao } from '../../../database/index.js';
 import type { BrowserSession } from '../../../modules/browser/browser.types.js';
@@ -1045,10 +1050,11 @@ export class DamTffTllRobot extends BaseRobot {
     pdf: Buffer,
     vencimento: string,
   ): Promise<BoletoEmitido> {
-    const diretorio = path.join(
-      tmpdir(),
-      'api-sefaz-ssa',
-      `dam-tff-tll-${entrada.inscricaoMunicipal}-${entrada.exercicio}`,
+    const diretorio = diretorioArtefatosExecucao(
+      'dam-tff-tll',
+      ctx.execucaoId,
+      entrada.inscricaoMunicipal,
+      entrada.exercicio,
     );
     await mkdir(diretorio, { recursive: true });
     const arquivo = `boleto-cota-${slugArquivoCota(cota.cota)}.pdf`;
@@ -1145,10 +1151,11 @@ export class DamTffTllRobot extends BaseRobot {
     }
     this.emitir(ctx, 'log', 'Gerando os artefatos da consulta');
     try {
-      const diretorio = path.join(
-        tmpdir(),
-        'api-sefaz-ssa',
-        `dam-tff-tll-${entrada.inscricaoMunicipal}-${entrada.exercicio}`,
+      const diretorio = diretorioArtefatosExecucao(
+        'dam-tff-tll',
+        ctx.execucaoId,
+        entrada.inscricaoMunicipal,
+        entrada.exercicio,
       );
       await mkdir(diretorio, { recursive: true });
       if (ctx.artefatos === 'print' || ctx.artefatos === 'ambos') {
@@ -1220,47 +1227,54 @@ export const executarDamTffTll = async (
     },
     artefatos,
     signal: AbortSignal.timeout(DAM_TFF_TLL_TIMEOUT_MS),
+    execucaoId: execucao.id,
   };
-  const resultado = await robo.executar(
-    { inscricaoMunicipal: entrada.inscricaoMunicipal, exercicio: entrada.exercicio },
-    ctx,
-  );
-  const saida: Record<string, unknown> = { sucesso: resultado.sucesso, dados: resultado.dados };
-  if (resultado.mensagem !== undefined) {
-    saida['mensagem'] = resultado.mensagem;
-  }
-  const brutos: unknown = resultado.dados['boletos'];
-  const boletosDados: Array<Record<string, unknown>> = Array.isArray(brutos)
-    ? brutos.filter(
-        (b): b is Record<string, unknown> => typeof b === 'object' && b !== null,
-      )
-    : [];
-  const porArquivo = new Map(boletosDados.map((b) => [String(b['arquivo'] ?? ''), b]));
-  let primeiroBoletoBase64: string | null = null;
-  let pdfLegadoBase64: string | null = null;
-  for (const arquivo of arquivos) {
-    const conteudo = await readFile(arquivo.caminho);
-    const base64 = conteudo.toString('base64');
-    if (arquivo.tipo === 'print') {
-      saida['printBase64'] = base64;
-      continue;
+  try {
+    const resultado = await robo.executar(
+      { inscricaoMunicipal: entrada.inscricaoMunicipal, exercicio: entrada.exercicio },
+      ctx,
+    );
+    const saida: Record<string, unknown> = { sucesso: resultado.sucesso, dados: resultado.dados };
+    if (resultado.mensagem !== undefined) {
+      saida['mensagem'] = resultado.mensagem;
     }
-    const entrada = porArquivo.get(path.basename(arquivo.caminho));
-    if (entrada !== undefined) {
-      entrada['pdfBase64'] = base64;
-      if (primeiroBoletoBase64 === null) {
-        primeiroBoletoBase64 = base64;
+    const brutos: unknown = resultado.dados['boletos'];
+    const boletosDados: Array<Record<string, unknown>> = Array.isArray(brutos)
+      ? brutos.filter(
+          (b): b is Record<string, unknown> => typeof b === 'object' && b !== null,
+        )
+      : [];
+    const porArquivo = new Map(boletosDados.map((b) => [String(b['arquivo'] ?? ''), b]));
+    let primeiroBoletoBase64: string | null = null;
+    let pdfLegadoBase64: string | null = null;
+    for (const arquivo of arquivos) {
+      const conteudo = await readFile(arquivo.caminho);
+      const base64 = conteudo.toString('base64');
+      if (arquivo.tipo === 'print') {
+        saida['printBase64'] = base64;
+        continue;
       }
-    } else {
-      pdfLegadoBase64 = base64;
+      const entrada = porArquivo.get(path.basename(arquivo.caminho));
+      if (entrada !== undefined) {
+        entrada['pdfBase64'] = base64;
+        if (primeiroBoletoBase64 === null) {
+          primeiroBoletoBase64 = base64;
+        }
+      } else {
+        pdfLegadoBase64 = base64;
+      }
     }
+    if (primeiroBoletoBase64 !== null) {
+      saida['pdfBase64'] = primeiroBoletoBase64;
+    } else if (pdfLegadoBase64 !== null) {
+      saida['pdfBase64'] = pdfLegadoBase64;
+    }
+    return saida;
+  } finally {
+    await removerDiretoriosTemporariosDaExecucao(execucao.id, ['dam-tff-tll']).catch(
+      () => undefined,
+    );
   }
-  if (primeiroBoletoBase64 !== null) {
-    saida['pdfBase64'] = primeiroBoletoBase64;
-  } else if (pdfLegadoBase64 !== null) {
-    saida['pdfBase64'] = pdfLegadoBase64;
-  }
-  return saida;
 };
 
 registrarExecutor('dam-tff-tll', executarDamTffTll);

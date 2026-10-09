@@ -224,3 +224,85 @@ describe('GET /v1/consultas/:tipo', () => {
     expect(res.json()?.error?.code).toBe('TIMEOUT');
   });
 });
+
+describe('GET /v1/:slug (slugs públicos)', () => {
+  function stubSucesso(tiposVistos: string[]): ServicoExecucoes {
+    const saida: ExecucaoResposta = {
+      execucaoId: 'exe_slug',
+      status: 'SUCCESS',
+      resultado: { sucesso: true, dados: { situacao: 'ativa' } },
+      cache: { hit: false },
+    };
+    return {
+      iniciar: async () => saida,
+      consultarSincrona: async (entrada) => {
+        tiposVistos.push(entrada.tipo);
+        return saida;
+      },
+      consultar: async () => saida,
+      cancelar: async () => undefined,
+    };
+  }
+
+  it('slug resolve para o tipo interno e equivale ao alias', async () => {
+    const tiposVistos: string[] = [];
+    const mundo = await montar({ servico: stubSucesso(tiposVistos) });
+    const viaSlug = await mundo.app.inject({
+      method: 'GET',
+      url: `/v1/ficha-cadastral-resumida?cnpj=${CNPJ_A}`,
+      headers: { 'x-api-key': mundo.tokenA },
+    });
+    const viaAlias = await mundo.app.inject({
+      method: 'GET',
+      url: `/v1/consultas/ficha-cadastral?cnpj=${CNPJ_A}`,
+      headers: { 'x-api-key': mundo.tokenA },
+    });
+    expect(viaSlug.statusCode).toBe(200);
+    expect(viaAlias.statusCode).toBe(200);
+    expect(viaSlug.json()).toEqual(viaAlias.json());
+    expect(viaSlug.json()).toMatchObject({ status: 'SUCCESS', dados: { situacao: 'ativa' } });
+    expect(tiposVistos).toEqual(['ficha-cadastral', 'ficha-cadastral']);
+  });
+
+  it('alias /v1/consultas/:tipo continua 200 (compatibilidade)', async () => {
+    const tiposVistos: string[] = [];
+    const mundo = await montar({ servico: stubSucesso(tiposVistos) });
+    const res = await mundo.app.inject({
+      method: 'GET',
+      url: `/v1/consultas/ficha-cadastral?cnpj=${CNPJ_A}`,
+      headers: { 'x-api-key': mundo.tokenA },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ status: 'SUCCESS' });
+    expect(tiposVistos).toEqual(['ficha-cadastral']);
+  });
+
+  it('slug inexistente responde 400', async () => {
+    const mundo = await montar();
+    const res = await mundo.app.inject({
+      method: 'GET',
+      url: '/v1/slug-que-nao-existe?cnpj=12345678000190',
+      headers: { 'x-api-key': mundo.tokenA },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()?.error?.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('slugs idênticos ao tipo resolvem normalmente', async () => {
+    const tiposVistos: string[] = [];
+    const mundo = await montar({ servico: stubSucesso(tiposVistos) });
+    const alvara = await mundo.app.inject({
+      method: 'GET',
+      url: `/v1/alvara-funcionamento?cnpj=${CNPJ_A}`,
+      headers: { 'x-api-key': mundo.tokenA },
+    });
+    const dam = await mundo.app.inject({
+      method: 'GET',
+      url: '/v1/dam-tff-tll?cga=123456&exercicio=2026',
+      headers: { 'x-api-key': mundo.tokenA },
+    });
+    expect(alvara.statusCode).toBe(200);
+    expect(dam.statusCode).toBe(200);
+    expect(tiposVistos).toEqual(['alvara-funcionamento', 'dam-tff-tll']);
+  });
+});

@@ -1,9 +1,14 @@
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Download, Locator, Page } from 'playwright-core';
 import { z } from 'zod';
-import { BaseRobot, type ExecucaoCtx, type ResultadoRobot } from '../../base/base-robot.js';
+import {
+  BaseRobot,
+  diretorioArtefatosExecucao,
+  removerDiretoriosTemporariosDaExecucao,
+  type ExecucaoCtx,
+  type ResultadoRobot,
+} from '../../base/base-robot.js';
 import {
   analisarTextoComRotulos,
   lerErroPortal as lerErroPortalCompartilhado,
@@ -411,7 +416,7 @@ export class AlvaraFuncionamentoRobot extends BaseRobot {
         this.lerErroPortal(pagina, cadeias).catch(() => ''),
       ]);
       if (descarga !== null) {
-        return { caminhoPdf: await this.salvarDownload(descarga, cnpj, inscricaoMunicipal) };
+        return { caminhoPdf: await this.salvarDownload(descarga, ctx, cnpj, inscricaoMunicipal) };
       }
       if (await this.confirmarEmissao(pagina, ctx, cadeias)) {
         const segunda = await pagina
@@ -421,7 +426,7 @@ export class AlvaraFuncionamentoRobot extends BaseRobot {
             () => null,
           );
         if (segunda !== null) {
-          return { caminhoPdf: await this.salvarDownload(segunda, cnpj, inscricaoMunicipal) };
+          return { caminhoPdf: await this.salvarDownload(segunda, ctx, cnpj, inscricaoMunicipal) };
         }
       }
       if (erro !== '') {
@@ -438,13 +443,16 @@ export class AlvaraFuncionamentoRobot extends BaseRobot {
 
   private async salvarDownload(
     descarga: Download,
+    ctx: ExecucaoCtx,
     cnpj: string,
     inscricaoMunicipal: string,
   ): Promise<string> {
-    const diretorio = path.join(
-      tmpdir(),
-      'api-sefaz-ssa',
-      `alvara-funcionamento-${cnpj}-${inscricaoMunicipal}-${Date.now()}`,
+    const diretorio = diretorioArtefatosExecucao(
+      'alvara-funcionamento',
+      ctx.execucaoId,
+      cnpj,
+      inscricaoMunicipal,
+      'download',
     );
     await mkdir(diretorio, { recursive: true });
     const caminhoPdf = path.join(diretorio, 'alvara.pdf');
@@ -506,7 +514,12 @@ export class AlvaraFuncionamentoRobot extends BaseRobot {
         return;
       }
       this.emitir(ctx, 'log', 'Gerando os artefatos da consulta');
-      const diretorio = path.join(tmpdir(), 'api-sefaz-ssa', `alvara-funcionamento-${cnpj}-${inscricaoMunicipal}`);
+      const diretorio = diretorioArtefatosExecucao(
+        'alvara-funcionamento',
+        ctx.execucaoId,
+        cnpj,
+        inscricaoMunicipal,
+      );
       await mkdir(diretorio, { recursive: true });
       if (ctx.artefatos === 'print' || ctx.artefatos === 'ambos') {
         const print = await pagina.screenshot({ type: 'jpeg', quality: 70, fullPage: true });
@@ -569,29 +582,36 @@ export const executarAlvaraFuncionamento = async (
     },
     artefatos,
     signal: AbortSignal.timeout(ALVARA_FUNCIONAMENTO_TIMEOUT_MS),
+    execucaoId: execucao.id,
   };
-  const resultado = await robo.executar(
-    {
-      cnpj: entrada.cnpj,
-      inscricaoMunicipal: entrada.inscricaoMunicipal,
-      ...(entrada.cpf === null ? {} : { cpf: entrada.cpf }),
-    },
-    ctx,
-  );
-  const saida: Record<string, unknown> = { sucesso: resultado.sucesso, dados: resultado.dados };
-  if (resultado.mensagem !== undefined) {
-    saida['mensagem'] = resultado.mensagem;
-  }
-  for (const arquivo of arquivos) {
-    const conteudo = await readFile(arquivo.caminho);
-    if (arquivo.tipo === 'print') {
-      saida['printBase64'] = conteudo.toString('base64');
+  try {
+    const resultado = await robo.executar(
+      {
+        cnpj: entrada.cnpj,
+        inscricaoMunicipal: entrada.inscricaoMunicipal,
+        ...(entrada.cpf === null ? {} : { cpf: entrada.cpf }),
+      },
+      ctx,
+    );
+    const saida: Record<string, unknown> = { sucesso: resultado.sucesso, dados: resultado.dados };
+    if (resultado.mensagem !== undefined) {
+      saida['mensagem'] = resultado.mensagem;
     }
-    if (arquivo.tipo === 'pdf_oficial' || arquivo.tipo === 'pdf_pagina') {
-      saida['pdfBase64'] = conteudo.toString('base64');
+    for (const arquivo of arquivos) {
+      const conteudo = await readFile(arquivo.caminho);
+      if (arquivo.tipo === 'print') {
+        saida['printBase64'] = conteudo.toString('base64');
+      }
+      if (arquivo.tipo === 'pdf_oficial' || arquivo.tipo === 'pdf_pagina') {
+        saida['pdfBase64'] = conteudo.toString('base64');
+      }
     }
+    return saida;
+  } finally {
+    await removerDiretoriosTemporariosDaExecucao(execucao.id, ['alvara-funcionamento']).catch(
+      () => undefined,
+    );
   }
-  return saida;
 };
 
 registrarExecutor('alvara-funcionamento', executarAlvaraFuncionamento);

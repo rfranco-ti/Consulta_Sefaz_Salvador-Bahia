@@ -1,17 +1,21 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { ehTipoAutomacao } from '../../automations/registry.js';
+import { ehTipoAutomacao, tipoPorSlug, type TipoAutomacao } from '../../automations/registry.js';
 import { WAIT_MAX_SEG } from '../../config/constants.js';
 import { env } from '../../config/env.js';
 import { db, DocumentosRepository } from '../../database/index.js';
 import { artefatosSchema, schemaDoTipo } from '../../modules/automation/automation.schemas.js';
+import { unirArtefatos } from '../../modules/automation/automation.repository.js';
 import type {
+  ArquivoSolicitado,
+  ArtefatosOpcao,
   ConsultarSincronaInput,
+  DocumentoInfo,
   ExecucaoResposta,
   IniciarExecucaoInput,
 } from '../../modules/automation/automation.types.js';
 import { obterCanalProgresso, type CanalProgresso } from '../../modules/jobs/progresso.js';
-import { ValidationError } from '../../shared/errors/index.js';
+import { AppError, NotFoundError, ValidationError } from '../../shared/errors/index.js';
 import { exigirApiKey, responderComErro } from '../erros.js';
 import { lerDoArmazenamento, type LeitorArquivo } from './documentos.js';
 
@@ -57,6 +61,19 @@ const idParamsSchema = z.object({
     .min(1, { error: 'Identificador é obrigatório' }),
 });
 
+/**
+ * Aceita o slug público (ex.: `ficha-cadastral-resumida`) ou o id interno
+ * (ex.: `ficha-cadastral`), como `GET /v1/:slug`. O retorno é sempre o id
+ * interno — é ele que alimenta `IniciarExecucaoInput.tipo` (chave de cache,
+ * despacho do robô, TTL e nome de documento dependem dele).
+ */
+function resolverTipo(parametro: string): TipoAutomacao {
+  const viaSlug = tipoPorSlug(parametro);
+  if (viaSlug) return viaSlug;
+  if (ehTipoAutomacao(parametro)) return parametro;
+  throw new ValidationError(`Tipo de automação inválido: ${parametro}`);
+}
+
 const comumSchema = z.object({
   artefatos: artefatosSchema.optional(),
   inline: z.boolean({ error: 'inline deve ser verdadeiro ou falso' }).optional(),
@@ -99,6 +116,10 @@ export function esperaDaQuery(valor: unknown): number | undefined {
 function separarCorpo(body: unknown): {
   params: Record<string, unknown>;
   comum: z.infer<typeof comumSchema>;
+  file: ArquivoSolicitado | null;
+  fileNoCorpo: boolean;
+  /** Verdadeiro quando o corpo trouxe `artefatos: 'nenhum'` explicitamente. */
+  artefatosNenhumExplicito: boolean;
 } {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     throw new ValidationError('Corpo da requisição deve ser um objeto JSON');
@@ -110,6 +131,7 @@ function separarCorpo(body: unknown): {
     forceRefresh,
     async: assincrono,
     idempotencyKey,
+    file: fileBruto,
     ...params
   } = registro;
   const comum = comumSchema.parse({
@@ -119,7 +141,198 @@ function separarCorpo(body: unknown): {
     async: assincrono,
     idempotencyKey,
   });
-  return { params, comum };
+  const fileNoCorpo = Object.hasOwn(registro, 'file');
+  return {
+    params,
+    comum,
+    file: interpretarFile(fileBruto),
+    fileNoCorpo,
+    artefatosNenhumExplicito: registro['artefatos'] === 'nenhum',
+  };
+}
+
+/**
+ * Parâmetro de controle `file` (opt-in de download binário do artefato).
+ *
+ * Valores aceitos — qualquer outro valor responde 400 VALIDATION_ERROR:
+ * - ausente ou `false` → resposta JSON inalterada (padrão, sem arquivo);
+ * - `true` → artefato primário: o primeiro `application/pdf`, senão o
+ *   primeiro `image/jpeg`;
+ * - `pdf` → o primeiro documento `application/pdf`;
+ * - `print` → o primeiro documento `image/jpeg`.
+ *
+ * É chave de CONTROLE: nunca compõe o payload do robô nem a chave de cache.
+ * Aceita booleanos nativos (corpo JSON) e strings sem sensibilidade a caixa.
+ */
+export function interpretarFile(valor: unknown): ArquivoSolicitado | null {
+  if (valor === undefined || valor === null) {
+    return null;
+  }
+  if (typeof valor === 'boolean') {
+    return valor ? 'principal' : null;
+  }
+  if (typeof valor === 'string') {
+    const normalizado = valor.trim().toLowerCase();
+    if (normalizado === 'false') {
+      return null;
+    }
+    if (normalizado === 'true') {
+      return 'principal';
+    }
+    if (normalizado === 'pdf') {
+      return 'pdf';
+    }
+    if (normalizado === 'print') {
+      return 'print';
+    }
+  }
+  throw new ValidationError('Parâmetro file inválido: use true, false, pdf ou print');
+}
+
+/**
+ * Eleva a opção de artefatos para o mínimo exigido pelo `file` solicitado,
+ * reutilizando `unirArtefatos` (o mesmo mecanismo de elevação do
+ * single-flight). `file=pdf` ⇒ ao menos `pdf`; `file=print` ⇒ ao menos
+ * `print`; `file=true` ⇒ `ambos`.
+ */
+export function artefatosParaArquivo(
+  atuais: ArtefatosOpcao,
+  file: ArquivoSolicitado | null,
+): ArtefatosOpcao {
+  if (file === null) {
+    return atuais;
+  }
+  if (file === 'pdf') {
+    return unirArtefatos(atuais, 'pdf');
+  }
+  if (file === 'print') {
+    return unirArtefatos(atuais, 'print');
+  }
+  return unirArtefatos(atuais, 'ambos');
+}
+
+export function selecionarDocumento(
+  documentos: DocumentoInfo[] | undefined,
+  pedido: ArquivoSolicitado,
+): DocumentoInfo | undefined {
+  const lista = documentos ?? [];
+  if (pedido === 'pdf') {
+    return lista.find((item) => item.contentType === 'application/pdf');
+  }
+  if (pedido === 'print') {
+    return lista.find((item) => item.contentType === 'image/jpeg');
+  }
+  return (
+    lista.find((item) => item.contentType === 'application/pdf') ??
+    lista.find((item) => item.contentType === 'image/jpeg')
+  );
+}
+
+/**
+ * Regra do cache em primeiro lugar para `file`: prioridade do cache é
+ * absoluta, MAS se `file` foi explicitamente pedido e a entrada em cache não
+ * tem nenhum artefato utilizável para ele (lista sem correspondência), isso
+ * conta como miss PARA ESTE pedido — o chamador deve executar de novo com
+ * `forceRefresh` e artefatos elevados, em vez de prender o cliente num 410.
+ * Referências que existiam mas estão ilegíveis/expiradas NÃO caem aqui: viram
+ * 410 em `responderArquivo`.
+ */
+export function precisaRenovarParaArquivo(
+  resposta: ExecucaoResposta,
+  file: ArquivoSolicitado | null,
+): boolean {
+  if (file === null || resposta.status !== 'SUCCESS' || resposta.cache?.hit !== true) {
+    return false;
+  }
+  return selecionarDocumento(resposta.resultado?.documentos, file) === undefined;
+}
+
+function erroArquivoExpirado(documentoId: string, execucaoId: string): AppError {
+  return new AppError('ARQUIVO_EXPIRADO', 'Artefato expirado ou removido do armazenamento', 410, {
+    details: {
+      documentoId,
+      execucaoId,
+      hint: 'Repita a consulta com forceRefresh=true para gerar um novo artefato',
+    },
+  });
+}
+
+/**
+ * Responde com os bytes brutos do documento: Content-Type do documento,
+ * Content-Disposition attachment (mesma lógica de /v1/documentos/:id) e os
+ * metadados do envelope JSON preservados em headers, já que o envelope é
+ * substituído pelo binário.
+ */
+export async function responderArquivo(
+  reply: FastifyReply,
+  resposta: ExecucaoResposta,
+  documento: DocumentoInfo,
+  opcoes: OpcoesResposta,
+): Promise<void> {
+  const repositorio = opcoes.documentos ?? new DocumentosRepository(db());
+  const registro = repositorio.buscarPorId(documento.id);
+  const agora = new Date().toISOString();
+  if (registro === null || (registro.expiraEm !== null && registro.expiraEm <= agora)) {
+    throw erroArquivoExpirado(documento.id, resposta.execucaoId);
+  }
+  const ler =
+    opcoes.lerArquivo ??
+    ((caminho: string) =>
+      lerDoArmazenamento(opcoes.diretorioArmazenamento ?? env.STORAGE_DIR, caminho));
+  let bytes: Buffer;
+  try {
+    bytes = await ler(registro.caminho);
+  } catch (erro) {
+    if (erro instanceof NotFoundError) {
+      throw erroArquivoExpirado(documento.id, resposta.execucaoId);
+    }
+    throw erro;
+  }
+  const cache = resposta.cache;
+  void reply
+    .header('content-type', registro.contentType)
+    .header('content-disposition', `attachment; filename="${registro.nomeArquivo}"`)
+    .header('x-execucao-id', resposta.execucaoId)
+    .header('x-cache-hit', cache?.hit === true ? 'true' : 'false');
+  if (cache?.camada !== undefined) {
+    void reply.header('x-cache-camada', cache.camada);
+  }
+  if (cache?.ttlRestanteSeg !== undefined) {
+    void reply.header('x-cache-ttl-restante-seg', String(cache.ttlRestanteSeg));
+  }
+  await reply.send(bytes);
+}
+
+export async function responderExecucaoComArquivo(
+  reply: FastifyReply,
+  resposta: ExecucaoResposta,
+  opcoes: OpcoesResposta & { file: ArquivoSolicitado | null },
+): Promise<void> {
+  const { file, ...base } = opcoes;
+  if (file === null || resposta.status !== 'SUCCESS') {
+    await responderExecucao(reply, resposta, base);
+    return;
+  }
+  try {
+    const alvo = selecionarDocumento(resposta.resultado?.documentos, file);
+    if (alvo === undefined) {
+      throw new AppError(
+        'NOT_FOUND',
+        'Nenhum artefato disponível para download nesta execução',
+        404,
+        {
+          details: {
+            file,
+            execucaoId: resposta.execucaoId,
+            hint: 'Solicite a consulta com file=pdf, file=print ou file=true e artefatos compatíveis para gerar o arquivo',
+          },
+        },
+      );
+    }
+    await responderArquivo(reply, resposta, alvo, base);
+  } catch (erro) {
+    await responderComErro(reply, erro);
+  }
 }
 
 export function statusDaFalha(codigo: string): number {
@@ -213,6 +426,7 @@ export async function responderExecucao(
       sucesso: resultado?.sucesso ?? true,
       dados: resultado?.dados ?? {},
       ...(resultado?.mensagem === undefined ? {} : { mensagem: resultado.mensagem }),
+      ...(resultado?.avisos === undefined ? {} : { avisos: resultado.avisos }),
       documentos: resultado?.documentos ?? [],
       cache: resposta.cache ?? { hit: false },
       ...(resposta.duracaoMs === undefined ? {} : { duracaoMs: resposta.duracaoMs }),
@@ -241,29 +455,54 @@ export function registrarExecucoes(app: FastifyInstance, deps: DepsExecucoes): v
   app.post('/v1/automacoes/:tipo', async (request, reply) => {
     try {
       exigirApiKey(request);
-      const { tipo } = tipoParamsSchema.parse(request.params);
-      if (!ehTipoAutomacao(tipo)) {
-        throw new ValidationError(`Tipo de automação inválido: ${tipo}`);
-      }
+      const { tipo: parametro } = tipoParamsSchema.parse(request.params);
+      const tipo = resolverTipo(parametro);
       schemaDoTipo(tipo);
-      const { params, comum } = separarCorpo(request.body);
+      const { params, comum, file: fileCorpo, fileNoCorpo, artefatosNenhumExplicito } =
+        separarCorpo(request.body);
       const query = consultaComoRegistro(request.query);
+      const file = fileNoCorpo ? fileCorpo : interpretarFile(query['file']);
+      if (file !== null && artefatosNenhumExplicito) {
+        throw new ValidationError(
+          'Parâmetros conflitantes: artefatos=nenhum não gera artefatos, mas file solicita o arquivo; ajuste artefatos ou remova file',
+        );
+      }
       const espera = esperaDaQuery(query['wait']) ?? (comum.async === false ? WAIT_MAX_SEG : null);
       const entrada: IniciarExecucaoInput = {
         tipo,
         params,
-        artefatos: comum.artefatos ?? 'nenhum',
+        artefatos: artefatosParaArquivo(comum.artefatos ?? 'nenhum', file),
         inline: comum.inline ?? false,
         forceRefresh: comum.forceRefresh ?? false,
         apiKeyId: request.apiKeyId,
         ...(comum.idempotencyKey === undefined ? {} : { idempotencyKey: comum.idempotencyKey }),
       };
+      const opcoesArquivo = {
+        ...opcoes,
+        inline: entrada.inline,
+        file,
+      };
       if (espera === null) {
-        const resposta = await servico.iniciar(entrada);
-        await responderExecucao(reply, resposta, { ...opcoes, inline: entrada.inline });
+        let resposta = await servico.iniciar(entrada);
+        if (precisaRenovarParaArquivo(resposta, file)) {
+          resposta = await servico.iniciar({
+            ...entrada,
+            forceRefresh: true,
+            artefatos: artefatosParaArquivo(entrada.artefatos, file),
+          });
+        }
+        await responderExecucaoComArquivo(reply, resposta, opcoesArquivo);
       } else {
-        const resposta = await servico.consultarSincrona({ ...entrada, waitSeg: espera });
-        await responderExecucao(reply, resposta, { ...opcoes, inline: entrada.inline });
+        let resposta = await servico.consultarSincrona({ ...entrada, waitSeg: espera });
+        if (precisaRenovarParaArquivo(resposta, file)) {
+          resposta = await servico.consultarSincrona({
+            ...entrada,
+            forceRefresh: true,
+            artefatos: artefatosParaArquivo(entrada.artefatos, file),
+            waitSeg: espera,
+          });
+        }
+        await responderExecucaoComArquivo(reply, resposta, opcoesArquivo);
       }
     } catch (erro) {
       await responderComErro(reply, erro);
@@ -274,7 +513,24 @@ export function registrarExecucoes(app: FastifyInstance, deps: DepsExecucoes): v
     try {
       exigirApiKey(request);
       const { id } = idParamsSchema.parse(request.params);
-      await reply.send(await servico.consultar(id, request.apiKeyId));
+      const query = consultaComoRegistro(request.query);
+      const file = interpretarFile(query['file']);
+      const resposta = await servico.consultar(id, request.apiKeyId);
+      // Divergência documentada: sem `file` (ou fora de SUCCESS) esta rota
+      // preserva o shape bruto do serviço em vez do envelope de
+      // `responderExecucao`. Com `file` + SUCCESS, serve o binário (ou
+      // 404/410) via o mesmo helper das demais rotas; nunca JSON silencioso.
+      if (file === null || resposta.status !== 'SUCCESS') {
+        await reply.send(resposta);
+        return;
+      }
+      await responderExecucaoComArquivo(reply, resposta, {
+        file,
+        inline: false,
+        documentos: deps.documentos,
+        diretorioArmazenamento: deps.diretorioArmazenamento,
+        lerArquivo: deps.lerArquivo,
+      });
     } catch (erro) {
       await responderComErro(reply, erro);
     }

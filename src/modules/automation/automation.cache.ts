@@ -167,7 +167,12 @@ export class CacheConsultas {
     return { dados: acerto.dados, camada: acerto.camada, ttlRestanteSeg: acerto.ttlRestanteSeg };
   }
 
-  gravarSucesso(tipo: TipoAutomacao, payload: unknown, resultado: unknown): void {
+  gravarSucesso(
+    tipo: TipoAutomacao,
+    payload: unknown,
+    resultado: unknown,
+    expiraEm?: string,
+  ): void {
     if (!ehTipoAutomacao(tipo)) {
       throw new ValidationError(`Tipo de automação inválido: ${String(tipo)}`);
     }
@@ -182,7 +187,25 @@ export class CacheConsultas {
     }
     const versao = this.versaoCache(tipo);
     const chave = montarChaveCache(tipo, payload);
-    this.gravar(tipo, chave, versao, dados);
+    this.gravar(tipo, chave, versao, dados, expiraEm);
+  }
+
+  /**
+   * Remove a entrada exata da chave nas duas camadas (memória + SQLite).
+   * Evicção explícita para uso operacional/em testes. NÃO é usada pelo
+   * `forceRefresh` de `obterOuCriar`: o refresh forçado preserva a entrada
+   * anterior até o novo voo concluir com sucesso (`finalizar` sobrescreve
+   * via INSERT OR REPLACE); se o voo falhar, a entrada antiga continua
+   * válida. Invalidar no caminho do refresh causaria perda de
+   * disponibilidade durante a indisponibilidade do portal.
+   */
+  invalidar(tipo: TipoAutomacao, payload: unknown): void {
+    if (!ehTipoAutomacao(tipo)) {
+      throw new ValidationError(`Tipo de automação inválido: ${String(tipo)}`);
+    }
+    const chave = montarChaveCache(tipo, payload);
+    this.memoria.delete(chave);
+    this.repo.remover(chave);
   }
 
   tamanhoMemoria(): number {
@@ -209,15 +232,28 @@ export class CacheConsultas {
     return resultado;
   }
 
-  private gravar(tipo: TipoAutomacao, chave: string, versao: number, dados: string): void {
+  private gravar(
+    tipo: TipoAutomacao,
+    chave: string,
+    versao: number,
+    dados: string,
+    expiraEm?: string,
+  ): void {
     const ttlMs = cacheConfig(tipo).ttlMs;
     this.repo.invalidarVersoesAnteriores(tipo, versao);
-    this.repo.salvar({ chave, tipo, dados, cacheVersion: versao, ttlMs });
+    this.repo.salvar({
+      chave,
+      tipo,
+      dados,
+      cacheVersion: versao,
+      ttlMs,
+      ...(expiraEm === undefined ? {} : { expiraEm }),
+    });
     this.memoria.set(chave, {
       tipo,
       dados,
       cacheVersion: versao,
-      expiraEmMs: this.agora() + ttlMs,
+      expiraEmMs: expiraEm === undefined ? this.agora() + ttlMs : Date.parse(expiraEm),
     });
     this.aplicarTeto();
   }

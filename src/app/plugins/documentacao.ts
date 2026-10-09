@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { TIPOS_AUTOMACAO } from '../../automations/registry.js';
 import {
+  arquivoQuerySchema,
   artefatosSchema,
   paramsPorTipo,
   tipoParamSchema,
@@ -62,6 +63,7 @@ function esquemasAutomacao(): Record<string, EsquemaJson> {
   const esquemas: Record<string, EsquemaJson> = {
     Artefatos: paraEsquema(z.toJSONSchema(artefatosSchema, { target: 'openapi-3.0' })),
     TipoAutomacao: paraEsquema(z.toJSONSchema(tipoParamSchema, { target: 'openapi-3.0' })),
+    File: paraEsquema(z.toJSONSchema(arquivoQuerySchema, { target: 'openapi-3.0' })),
   };
   for (const tipo of TIPOS_AUTOMACAO) {
     esquemas[`${tipo}-params`] = paraEsquema(
