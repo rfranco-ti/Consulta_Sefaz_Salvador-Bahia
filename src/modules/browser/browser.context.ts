@@ -472,6 +472,9 @@ export class BrowserContextService {
         hardwareConcurrency: impressao.hardwareConcurrency,
         deviceMemory: impressao.deviceMemory,
       });
+      await contexto.addInitScript(
+        '(() => { if (typeof globalThis.__name !== "function") { globalThis.__name = (alvo) => alvo; } })();',
+      );
       const pagina = await contexto.newPage();
       return {
         browser,
