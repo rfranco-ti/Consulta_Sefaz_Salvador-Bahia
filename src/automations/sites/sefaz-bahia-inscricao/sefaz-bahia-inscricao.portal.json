@@ -2,10 +2,10 @@
   "metadata": {
     "nome": "SEFAZ Bahia por Inscrição Estadual",
     "sigla": "SEFAZ_BA",
-    "versao": "1.0",
+    "versao": "1.1",
     "autor": "api-sefaz-ssa",
     "dataCriacao": "2026-10-05",
-    "dataUltimaValidacao": "2026-10-05",
+    "dataUltimaValidacao": "2026-10-09",
     "urlOficial": "https://portal.sefaz.ba.gov.br/scripts/cadastro/cadastroBa/consultaBa.asp",
     "descricao": "Consulta cadastro de contribuintes pela Inscrição Estadual no portal da SEFAZ Bahia"
   },
@@ -23,19 +23,19 @@
   },
   "seletores": {
     "campo_inscricao_estadual": {
-      "descricao": "Campo de Inscrição Estadual do formulário de consulta",
+      "descricao": "Campo de Inscrição Estadual (name IE) do formulário de consulta",
       "seletores": [
-        "input[name*='inscricao']",
-        "input[placeholder*='Inscri']",
-        "xpath=//form//input[@type='text']"
+        "input[name='IE']",
+        "xpath=//input[@name='IE']",
+        "xpath=//td[contains(., 'Inscrição Estadual')]/following::input[not(@type='submit')][1]"
       ]
     },
     "botao_consultar": {
-      "descricao": "Botão que submete a consulta",
+      "descricao": "Botão IE que submete a consulta por Inscrição Estadual",
       "seletores": [
-        "input[value='Consultar']",
-        "text=Consultar",
-        "xpath=//form//input[@type='submit']"
+        "input[name='B2']",
+        "xpath=//input[@name='B2']",
+        "xpath=//td[contains(., 'Inscrição Estadual')]/following::input[@type='submit'][1]"
       ]
     },
     "tabela_resultado": {

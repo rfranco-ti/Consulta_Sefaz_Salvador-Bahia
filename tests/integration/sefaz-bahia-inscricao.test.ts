@@ -77,7 +77,7 @@ async function servirPortal(
     rota.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: formulario }),
   );
   await sessao.page.route(
-    (url) => url.href.includes('resultado.asp'),
+    (url) => url.href.includes('result.asp') || url.href.includes('resultado.asp'),
     (rota) => rota.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: resultado }),
   );
 }
@@ -205,12 +205,12 @@ describe('robot sefaz-bahia-inscricao', () => {
   );
 
   it(
-    'usa o fallback de placeholder quando o name do campo some',
+    'usa o fallback relativo ao rótulo quando o name do campo some',
     { timeout: 90000 },
     async () => {
       const { sessao, fechar } = await abrirSessao();
       try {
-        const formSemName = formHtml.replace('name="inscricao"', 'placeholder="Inscrição Estadual"');
+        const formSemName = formHtml.replace('name="IE"', 'data-campo="ie"');
         await servirPortal(sessao, formSemName, resultadoHtml);
         const resultado = await executarSefazBahiaInscricao(
           montarExecucao('exe_fallback', { inscricaoEstadual: IE_DIGITOS }),
@@ -231,7 +231,7 @@ describe('robot sefaz-bahia-inscricao', () => {
     async () => {
       const { sessao, fechar } = await abrirSessao();
       try {
-        const formSemCampo = formHtml.replace('<input type="text" name="inscricao" maxlength="9" />', '');
+        const formSemCampo = formHtml.replace('<input size="18" maxlength="14" name="IE" class="input" />', '');
         await servirPortal(sessao, formSemCampo, resultadoHtml);
         let erro: unknown = null;
         try {
@@ -242,7 +242,7 @@ describe('robot sefaz-bahia-inscricao', () => {
         expect(erro).toBeInstanceOf(EtapaError);
         expect((erro as EtapaError).etapa).toBe('preencher-inscricao');
         expect((erro as Error).message).toContain('campo_inscricao_estadual');
-        expect((erro as Error).message).toContain("input[name*='inscricao']");
+        expect((erro as Error).message).toContain("input[name='IE']");
       } finally {
         await fechar();
       }

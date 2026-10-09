@@ -1,11 +1,35 @@
 <html>
-<head><title>Consulta Cadastro por Inscrição Estadual</title></head>
+<head><title>Consulta ao Cadastro</title></head>
 <body>
-<table><tbody><tr><td>
-<form action="resultado.asp" method="get" name="consulta">
-<p>Inscrição Estadual: <input type="text" name="inscricao" maxlength="9" /></p>
-<input type="submit" value="Consultar" />
+<table width="100%" border="0" cellspacing="0" cellpadding="0"><tbody><tr><td>
+<table width="450" align="center" class="conteudo"><tbody><tr><td>
+<form action="result.asp" method="post">
+<input type="hidden" name="sefp" value="1" />
+<input type="hidden" name="estado" value="BA" />
+<table width="450" class="conteudo"><tbody>
+<tr><td colspan="5">Entre com uma das opções de consulta:</td></tr>
+<tr>
+<td colspan="2">CNPJ:</td>
+<td><p><input size="18" maxlength="14" name="CGC" class="input" /></p></td>
+<td>&nbsp;</td>
+<td><input type="submit" name="B1" value="CNPJ  -&gt;" class="botao" /></td>
+</tr>
+<tr>
+<td>CPF:</td>
+<td>contribuintes cadastrados como ambulantes ou produtores rurais</td>
+<td><p><input name="CPF" size="18" class="input" maxlength="11" /></p></td>
+<td>&nbsp;</td>
+<td><input type="submit" value="CPF -&gt;" name="B3" class="botao" /></td>
+</tr>
+<tr>
+<td colspan="2">Inscrição Estadual:</td>
+<td><p><input size="18" maxlength="14" name="IE" class="input" /></p></td>
+<td>&nbsp;</td>
+<td><input type="submit" name="B2" value="IE  -&gt;" class="botao" /></td>
+</tr>
+</tbody></table>
 </form>
+</td></tr></tbody></table>
 </td></tr></tbody></table>
 </body>
 </html>
