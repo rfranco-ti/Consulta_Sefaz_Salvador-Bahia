@@ -148,37 +148,105 @@ function mensagemDeErro(erro: unknown): string {
 }
 
 function extrairSocio(): SocioBruto {
-  const aplainar = (texto: string): string =>
-    texto.replace(/\u00a0/g, ' ').replace(/\s{2,}/g, ' ').trim();
-
-  const extrairPares = (celula: ElementoPagina): Array<{ rotulo: string; valor: string }> => {
-    const pares: Array<{ rotulo: string; valor: string }> = [];
-    let rotuloAtual: string | null = null;
-    let valorAtual = '';
-    celula.childNodes.forEach((no) => {
-      if (no.nodeType === 1 && no.tagName === 'B') {
-        if (rotuloAtual !== null) {
-          pares.push({ rotulo: rotuloAtual, valor: aplainar(valorAtual) });
+  const ajuda = {
+    aplainar(texto: string): string {
+      return texto.replace(/\u00a0/g, ' ').replace(/\s{2,}/g, ' ').trim();
+    },
+    pares(celula: ElementoPagina): Array<{ rotulo: string; valor: string }> {
+      const lista: Array<{ rotulo: string; valor: string }> = [];
+      let rotuloAtual: string | null = null;
+      let valorAtual = '';
+      celula.childNodes.forEach((no) => {
+        if (no.nodeType === 1 && no.tagName === 'B') {
+          if (rotuloAtual !== null) {
+            lista.push({ rotulo: rotuloAtual, valor: ajuda.aplainar(valorAtual) });
+          }
+          const texto = ajuda.aplainar(no.textContent ?? '').replace(/:$/, '');
+          rotuloAtual = texto === '' ? null : texto;
+          valorAtual = '';
+        } else {
+          valorAtual += no.textContent ?? '';
         }
-        const texto = aplainar(no.textContent ?? '').replace(/:$/, '');
-        rotuloAtual = texto === '' ? null : texto;
-        valorAtual = '';
-      } else {
-        valorAtual += no.textContent ?? '';
+      });
+      if (rotuloAtual !== null) {
+        lista.push({ rotulo: rotuloAtual, valor: ajuda.aplainar(valorAtual) });
       }
-    });
-    if (rotuloAtual !== null) {
-      pares.push({ rotulo: rotuloAtual, valor: aplainar(valorAtual) });
-    }
-    return pares;
+      return lista;
+    },
+    tabelasComTexto(padrao: RegExp): ElementoPagina[] {
+      const encontradas: ElementoPagina[] = [];
+      const todas = document.querySelectorAll('table');
+      for (let indice = 0; indice < todas.length; indice += 1) {
+        const candidata = todas.item(indice);
+        if (candidata === null) {
+          continue;
+        }
+        if (padrao.test(ajuda.aplainar(candidata.textContent ?? ''))) {
+          encontradas.push(candidata);
+        }
+      }
+      return encontradas;
+    },
+    tabelaInterna(idLegado: string, padrao: RegExp): ElementoPagina | null {
+      const legada = document.getElementById(idLegado);
+      if (legada !== null) {
+        return legada;
+      }
+      const candidatas = ajuda.tabelasComTexto(padrao);
+      const ultima = candidatas[candidatas.length - 1];
+      return ultima === undefined ? null : ultima;
+    },
+    novoEstabelecimento(): EstabelecimentoBruto {
+      return {
+        cnpj: '',
+        inscricaoEstadual: '',
+        razaoSocial: '',
+        atividadeEconomica: '',
+        condicao: '',
+        situacao: '',
+        logradouro: '',
+        numero: '',
+        complemento: '',
+        bairro: '',
+        municipio: '',
+        uf: '',
+        cep: '',
+        telefone: '',
+        dataSituacao: '',
+        dataInicioVigencia: '',
+        dataFimVigencia: '',
+      };
+    },
+    temCampo(estabelecimento: EstabelecimentoBruto): boolean {
+      return Object.values(estabelecimento).some((valor) => valor !== '');
+    },
+    aplicar(alvo: EstabelecimentoBruto, rotulo: string, valor: string): void {
+      if (rotulo === 'cnpj') alvo.cnpj = valor;
+      else if (rotulo === 'inscrição estadual') alvo.inscricaoEstadual = valor;
+      else if (rotulo === 'razão social') alvo.razaoSocial = valor;
+      else if (rotulo === 'atividade econômica') alvo.atividadeEconomica = valor;
+      else if (rotulo === 'condição') alvo.condicao = valor;
+      else if (rotulo === 'situação') alvo.situacao = valor;
+      else if (rotulo === 'logradouro') alvo.logradouro = valor;
+      else if (rotulo === 'número') alvo.numero = valor;
+      else if (rotulo === 'complemento') alvo.complemento = valor;
+      else if (rotulo === 'bairro/distrito') alvo.bairro = valor;
+      else if (rotulo === 'município') alvo.municipio = valor;
+      else if (rotulo === 'uf') alvo.uf = valor;
+      else if (rotulo === 'cep') alvo.cep = valor;
+      else if (rotulo === 'telefone') alvo.telefone = valor;
+      else if (rotulo === 'data da situação') alvo.dataSituacao = valor;
+      else if (rotulo === 'data início vigência') alvo.dataInicioVigencia = valor;
+      else if (rotulo === 'data fim vigência') alvo.dataFimVigencia = valor;
+    },
   };
 
-  const tabelaSocio = document.getElementById('TabelaSocio');
+  const tabelaSocio = ajuda.tabelaInterna('TabelaSocio', /Informações dos Sócio/i);
   let nome = '';
   let cpfFormatado = '';
   if (tabelaSocio !== null) {
     tabelaSocio.querySelectorAll('td').forEach((celula) => {
-      for (const par of extrairPares(celula)) {
+      for (const par of ajuda.pares(celula)) {
         const rotulo = par.rotulo.toLowerCase();
         if (rotulo === 'nome' && nome === '') {
           nome = par.valor;
@@ -189,89 +257,81 @@ function extrairSocio(): SocioBruto {
       }
     });
   }
-
-  const vazio = (): EstabelecimentoBruto => ({
-    cnpj: '',
-    inscricaoEstadual: '',
-    razaoSocial: '',
-    atividadeEconomica: '',
-    condicao: '',
-    situacao: '',
-    logradouro: '',
-    numero: '',
-    complemento: '',
-    bairro: '',
-    municipio: '',
-    uf: '',
-    cep: '',
-    telefone: '',
-    dataSituacao: '',
-    dataInicioVigencia: '',
-    dataFimVigencia: '',
-  });
-
-  const temCampo = (estabelecimento: EstabelecimentoBruto): boolean =>
-    Object.values(estabelecimento).some((valor) => valor !== '');
-
-  const aplicarPar = (alvo: EstabelecimentoBruto, rotulo: string, valor: string): void => {
-    if (rotulo === 'cnpj') alvo.cnpj = valor;
-    else if (rotulo === 'inscrição estadual') alvo.inscricaoEstadual = valor;
-    else if (rotulo === 'razão social') alvo.razaoSocial = valor;
-    else if (rotulo === 'atividade econômica') alvo.atividadeEconomica = valor;
-    else if (rotulo === 'condição') alvo.condicao = valor;
-    else if (rotulo === 'situação') alvo.situacao = valor;
-    else if (rotulo === 'logradouro') alvo.logradouro = valor;
-    else if (rotulo === 'número') alvo.numero = valor;
-    else if (rotulo === 'complemento') alvo.complemento = valor;
-    else if (rotulo === 'bairro/distrito') alvo.bairro = valor;
-    else if (rotulo === 'município') alvo.municipio = valor;
-    else if (rotulo === 'uf') alvo.uf = valor;
-    else if (rotulo === 'cep') alvo.cep = valor;
-    else if (rotulo === 'telefone') alvo.telefone = valor;
-    else if (rotulo === 'data da situação') alvo.dataSituacao = valor;
-    else if (rotulo === 'data início vigência') alvo.dataInicioVigencia = valor;
-    else if (rotulo === 'data fim vigência') alvo.dataFimVigencia = valor;
-  };
+  if (nome === '' || cpfFormatado === '') {
+    document.querySelectorAll('td').forEach((celula) => {
+      if (nome !== '' && cpfFormatado !== '') {
+        return;
+      }
+      for (const par of ajuda.pares(celula)) {
+        const rotulo = par.rotulo.toLowerCase();
+        if (rotulo === 'nome' && nome === '') {
+          nome = par.valor;
+        }
+        if (rotulo === 'cpf' && cpfFormatado === '') {
+          cpfFormatado = par.valor;
+        }
+      }
+    });
+  }
+  if (nome === '' || cpfFormatado === '') {
+    const corpo = (document.body?.innerText ?? '').replace(/\u00a0/g, ' ');
+    if (nome === '') {
+      const achado = /Nome:\s*(.+?)\s*CPF:/i.exec(corpo);
+      if (achado !== null && achado[1] !== undefined) {
+        nome = achado[1].replace(/\s{2,}/g, ' ').trim();
+      }
+    }
+    if (cpfFormatado === '') {
+      const achado = /CPF:\s*([\d./-]+)/i.exec(corpo);
+      if (achado !== null && achado[1] !== undefined) {
+        cpfFormatado = achado[1].trim();
+      }
+    }
+  }
 
   const lista: EstabelecimentoBruto[] = [];
-  const tabela = document.getElementById('TabelaEstabelecimentos');
-  if (tabela !== null) {
-    let atual: EstabelecimentoBruto | null = null;
-    tabela.querySelectorAll('tr').forEach((linha) => {
-      const textoLinha = aplainar(linha.textContent ?? '');
-      if (textoLinha === '') {
-        if (atual !== null && temCampo(atual)) {
-          lista.push(atual);
-          atual = null;
-        }
-        return;
-      }
-      if (/Estabelecimentos aos quais/i.test(textoLinha) || /Nenhum estabelecimento/i.test(textoLinha)) {
-        return;
-      }
-      let temCnpj = false;
-      linha.querySelectorAll('td').forEach((celula) => {
-        for (const par of extrairPares(celula)) {
-          if (par.rotulo.toLowerCase() === 'cnpj' && par.valor !== '') {
-            temCnpj = true;
-          }
-        }
-      });
-      if (temCnpj && atual !== null && temCampo(atual)) {
+  const tabela = ajuda.tabelaInterna('TabelaEstabelecimentos', /Estabelecimentos aos quais/i);
+  const linhas = tabela !== null ? tabela.querySelectorAll('tr') : document.querySelectorAll('tr');
+  let atual: EstabelecimentoBruto | null = null;
+  linhas.forEach((linha) => {
+    const textoLinha = ajuda.aplainar(linha.textContent ?? '');
+    if (textoLinha === '') {
+      if (atual !== null && ajuda.temCampo(atual)) {
         lista.push(atual);
         atual = null;
       }
-      const alvo: EstabelecimentoBruto = atual === null ? vazio() : atual;
-      atual = alvo;
-      linha.querySelectorAll('td').forEach((celula) => {
-        for (const par of extrairPares(celula)) {
-          aplicarPar(alvo, par.rotulo.toLowerCase(), par.valor);
-        }
-      });
-    });
-    if (atual !== null && temCampo(atual)) {
-      lista.push(atual);
+      return;
     }
+    if (
+      /Estabelecimentos aos quais/i.test(textoLinha) ||
+      /Informações dos Sócio/i.test(textoLinha) ||
+      /Consulta de Sócio/i.test(textoLinha) ||
+      /Nenhum estabelecimento/i.test(textoLinha)
+    ) {
+      return;
+    }
+    let temCnpj = false;
+    linha.querySelectorAll('td').forEach((celula) => {
+      for (const par of ajuda.pares(celula)) {
+        if (par.rotulo.toLowerCase() === 'cnpj' && par.valor !== '') {
+          temCnpj = true;
+        }
+      }
+    });
+    if (temCnpj && atual !== null && ajuda.temCampo(atual)) {
+      lista.push(atual);
+      atual = null;
+    }
+    const alvo: EstabelecimentoBruto = atual === null ? ajuda.novoEstabelecimento() : atual;
+    atual = alvo;
+    linha.querySelectorAll('td').forEach((celula) => {
+      for (const par of ajuda.pares(celula)) {
+        ajuda.aplicar(alvo, par.rotulo.toLowerCase(), par.valor);
+      }
+    });
+  });
+  if (atual !== null && ajuda.temCampo(atual)) {
+    lista.push(atual);
   }
 
   let dataConsulta = '';
@@ -279,12 +339,19 @@ function extrairSocio(): SocioBruto {
     if (dataConsulta !== '') {
       return;
     }
-    const texto = aplainar(tabelaGenerica.textContent ?? '');
+    const texto = ajuda.aplainar(tabelaGenerica.textContent ?? '');
     const achado = /Data da Consulta\s*:\s*([\d/]+)/i.exec(texto);
     if (achado !== null && achado[1] !== undefined) {
       dataConsulta = achado[1];
     }
   });
+  if (dataConsulta === '') {
+    const corpo = ajuda.aplainar(document.body?.innerText ?? '');
+    const achado = /Data da Consulta\s*:\s*([\d/]+)/i.exec(corpo);
+    if (achado !== null && achado[1] !== undefined) {
+      dataConsulta = achado[1];
+    }
+  }
 
   return {
     nome,

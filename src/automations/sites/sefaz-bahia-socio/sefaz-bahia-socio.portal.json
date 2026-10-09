@@ -2,10 +2,10 @@
   "metadata": {
     "nome": "SEFAZ Bahia — Sócio",
     "sigla": "SEFAZ_BA",
-    "versao": "1.0",
+    "versao": "1.1",
     "autor": "api-sefaz-ssa",
     "dataCriacao": "2026-10-05",
-    "dataUltimaValidacao": "2026-10-05",
+    "dataUltimaValidacao": "2026-10-09",
     "urlOficial": "https://portal.sefaz.ba.gov.br/scripts/cadastro/socio/socio.asp",
     "descricao": "Consulta de estabelecimentos vinculados ao CPF do sócio no portal da SEFAZ Bahia"
   },
@@ -41,8 +41,8 @@
     "tabela_resultado": {
       "descricao": "Sinal de que a página de resultado do sócio carregou",
       "seletores": [
-        "#TabelaEstabelecimentos",
         "text=Estabelecimentos aos quais",
+        "text=Data da Consulta",
         "xpath=//td[contains(., 'Data da Consulta')]"
       ]
     }
@@ -84,8 +84,8 @@
   ],
   "extracao": {
     "estrategia": "mapa-rotulos",
-    "descricao": "Mapa rótulo→valor a partir das tabelas TabelaSocio, TabelaEstabelecimentos e TabelaConsulta; imune a re-layout enquanto os rótulos em negrito forem mantidos",
-    "tabelas": ["TabelaSocio", "TabelaEstabelecimentos", "TabelaConsulta"],
+    "descricao": "Mapa rótulo→valor por textos de cabeçalho nas tabelas de classe conteudo, sem depender de ids; imune a re-layout enquanto os rótulos em negrito forem mantidos",
+    "tabelas": ["conteudo"],
     "obrigatorio": []
   },
   "artefatos": {

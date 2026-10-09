@@ -170,10 +170,13 @@ describe('robot sefaz-bahia-socio', () => {
           expect(estabelecimentos[0]?.['situacao']).toBe('ATIVO');
           expect(estabelecimentos[0]?.['municipio']).toBe('SALVADOR');
           expect(estabelecimentos[0]?.['cep']).toBe('40000-000');
+          expect(estabelecimentos[0]?.['dataInicioVigencia']).toBe('10/03/2020');
           expect(estabelecimentos[0]?.['dataFimVigencia']).toBe('');
           expect(estabelecimentos[1]?.['cnpj']).toBe('98.765.432/0001-10');
           expect(estabelecimentos[1]?.['razaoSocial']).toBe('OUTRA EMPRESA SA');
           expect(estabelecimentos[1]?.['cep']).toBe('40010-000');
+          expect(estabelecimentos[1]?.['dataInicioVigencia']).toBe('20/06/2023');
+          expect(estabelecimentos[1]?.['dataFimVigencia']).toBe('');
           expect(dados['dataConsulta']).toBe('05/10/2026');
           expect(resultado['mensagem']).toMatch(/sucesso/);
           expect(typeof resultado['printBase64']).toBe('string');
@@ -250,6 +253,66 @@ describe('robot sefaz-bahia-socio', () => {
         expect((erro as EtapaError).etapa).toBe('preencher-cpf');
         expect((erro as Error).message).toContain('campo_cpf');
         expect((erro as Error).message).toContain("input[name='CPF']");
+      } finally {
+        await fechar();
+      }
+    },
+  );
+
+  it(
+    'extrai de layout aninhado sem ids como o portal real',
+    { timeout: 90000 },
+    async () => {
+      const aninhado = [
+        '<html><head><title>Resultado Sócio</title></head><body>',
+        '<table width="100%" border="0" cellspacing="0" cellpadding="0"><tbody>',
+        '<tr valign="top" class="conteudo"><td>',
+        '<table width="550" border="0" class="conteudo"><tbody>',
+        '<tr bgcolor="#6699CC"><td colspan="6"><b><font color="#FFFFFF">Informações dos Sócio/responsável</font></b></td></tr>',
+        '<tr><td colspan="6"><b>Nome:</b>&nbsp;&nbsp;JOAO DA SILVA&nbsp;&nbsp;<b>CPF:</b>&nbsp;&nbsp;111.444.777-35</td></tr>',
+        '</tbody></table><br />',
+        '<table width="550" border="0" class="conteudo"><tbody>',
+        '<tr><td colspan="4" bgcolor="#6699CC"><b><font color="#FFFFFF">Estabelecimentos aos quais o sócio está vinculado</font></b></td></tr>',
+        '<tr><td colspan="2"><b>CNPJ:</b>&nbsp;&nbsp;12.345.678/0001-95</td><td colspan="2" width="332"><b>Inscrição Estadual:</b>&nbsp;&nbsp;123456789</td></tr>',
+        '<tr><td colspan="4"><b>Razão Social:</b>&nbsp;&nbsp;EMPRESA EXEMPLO LTDA</td></tr>',
+        '<tr><td colspan="4"><b>Atividade Econômica:</b>&nbsp;&nbsp;0623400 - COMERCIO VAREJISTA EXEMPLO</td></tr>',
+        '<tr><td colspan="4"><b>Condição:</b>&nbsp;&nbsp;NORMAL&nbsp;&nbsp;<b>Situação:</b>&nbsp;&nbsp;ATIVO</td></tr>',
+        '<tr><td colspan="4"><b>Logradouro:</b>&nbsp;&nbsp;AVENIDA EXEMPLO</td></tr>',
+        '<tr><td colspan="4"><b>Número:</b>&nbsp;&nbsp;1000&nbsp;&nbsp;<b>Complemento:</b>&nbsp;&nbsp;SALA 1</td></tr>',
+        '<tr><td colspan="4"><b>Bairro/Distrito:</b>&nbsp;&nbsp;CENTRO</td></tr>',
+        '<tr><td colspan="4"><b>Município:</b>&nbsp;&nbsp;SALVADOR&nbsp;&nbsp;<b>UF:</b>&nbsp;&nbsp;BA</td></tr>',
+        '<tr><td colspan="4"><b>CEP:</b>&nbsp;&nbsp;40000000&nbsp;&nbsp;<b>Telefone:</b>&nbsp;&nbsp;(71) 3333-4444</td></tr>',
+        '<tr><td colspan="4"><b>Data da Situação:</b>&nbsp;&nbsp;10/03/2015</td></tr>',
+        '<tr><td colspan="2"><b>Data Início Vigência:</b>&nbsp;&nbsp;10/03/2015</td><td colspan="2" width="332"><b>Data&nbsp;Fim&nbsp;Vigência:</b>&nbsp;&nbsp;10/03/2020</td></tr>',
+        '<tr><td colspan="2"><b>Data Início Vigência:</b>&nbsp;&nbsp;10/03/2020</td><td colspan="2" width="332"><b>Data&nbsp;Fim&nbsp;Vigência:</b>&nbsp;&nbsp;()</td></tr>',
+        '</tbody></table>',
+        '<table border="0" width="550" cellspacing="2" cellpadding="2" class="conteudo" bgcolor="#E2ECF5"><tbody>',
+        '<tr><td><b>OBSERVAÇÃO:</b>&nbsp;&nbsp;Os dados acima são baseados em informações fornecidas pelo contribuinte</td></tr>',
+        '</tbody></table>',
+        '<table border="0" width="550" cellspacing="2" cellpadding="2" class="conteudo"><tbody>',
+        '<tr><td colspan="2"><b>Data da Consulta:</b>&nbsp;&nbsp;<font color="#6699CC"><b>05/10/2026</b></font></td></tr>',
+        '</tbody></table>',
+        '</td></tr></tbody></table></body></html>',
+      ].join('');
+      const { sessao, fechar } = await abrirSessao();
+      try {
+        await servirPortal(sessao, formHtml, aninhado);
+        const resultado = await executarSefazBahiaSocio(
+          montarExecucao('exe_aninhado', { cpf: CPF_DIGITOS }),
+          sessao,
+        );
+        expect(resultado['sucesso']).toBe(true);
+        const dados = resultado['dados'] as Record<string, unknown>;
+        expect(dados['nome']).toBe('JOAO DA SILVA');
+        expect(dados['cpf']).toBe('111.444.777-35');
+        expect(dados['totalEstabelecimentos']).toBe(1);
+        const estabelecimentos = dados['estabelecimentos'] as Array<Record<string, string>>;
+        expect(estabelecimentos).toHaveLength(1);
+        expect(estabelecimentos[0]?.['cnpj']).toBe('12.345.678/0001-95');
+        expect(estabelecimentos[0]?.['razaoSocial']).toBe('EMPRESA EXEMPLO LTDA');
+        expect(estabelecimentos[0]?.['dataInicioVigencia']).toBe('10/03/2020');
+        expect(estabelecimentos[0]?.['dataFimVigencia']).toBe('');
+        expect(dados['dataConsulta']).toBe('05/10/2026');
       } finally {
         await fechar();
       }
