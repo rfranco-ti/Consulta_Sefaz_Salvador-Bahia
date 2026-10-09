@@ -15,6 +15,7 @@ import {
   BrowserError,
   EtapaError,
   InternalError,
+  TimeoutError,
   ValidationError,
 } from '../../src/shared/errors/index.js';
 
@@ -76,8 +77,44 @@ function montarDeps(): {
   return { deps, portais, sessoes, totalLiberadas: () => liberadas };
 }
 
-describe('executor consulta-inscricoes', () => {
-  it('registra seu executor no carregamento do módulo', () => {
+function montarDepsMunicipalComPagina(conteudo = '<html><body>form</body></html>'): {
+  deps: DepsExecutor;
+  responderMunicipal(status: number, url: string): void;
+} {
+  const ouvintes: Record<string, Array<(carga: unknown) => void>> = {};
+  const pagina = {
+    on: (evento: string, ouvinte: (carga: unknown) => void): void => {
+      const lista = ouvintes[evento] ?? [];
+      lista.push(ouvinte);
+      ouvintes[evento] = lista;
+    },
+    off: (evento: string, ouvinte: (carga: unknown) => void): void => {
+      const lista = ouvintes[evento] ?? [];
+      ouvintes[evento] = lista.filter((atual) => atual !== ouvinte);
+    },
+    content: async (): Promise<string> => conteudo,
+    url: (): string =>
+      'https://servicosweb.sefaz.salvador.ba.gov.br/WebsiteV2/Sistemas/AlvaraCgaInternet/Modulos/Principal/AlvaraCgaEmissaoFichaResumidaFrm.aspx',
+  };
+  const deps: DepsExecutor = {
+    criarSessao: async (portal: string) => {
+      if (portal === 'PREF_SALVADOR') {
+        return { portal, page: pagina, liberar: async () => undefined } as unknown as BrowserSession;
+      }
+      return { portal, liberar: async () => undefined } as unknown as BrowserSession;
+    },
+  };
+  return {
+    deps,
+    responderMunicipal: (status: number, url: string) => {
+      for (const ouvinte of ouvintes['response'] ?? []) {
+        ouvinte({ status: () => status, url: () => url });
+      }
+    },
+  };
+}
+
+describe('executor consulta-inscricoes', () => {  it('registra seu executor no carregamento do módulo', () => {
     expect(obterExecutor('consulta-inscricoes')).toBe(executarConsultaInscricoes);
   });
 
@@ -429,5 +466,170 @@ describe('executor consulta-inscricoes', () => {
       montarDeps().deps,
     );
     expect(resultado).toEqual({ eco: 'exe_ci_compativel' });
+  });
+
+  it('degrada para sucesso parcial com aviso quando a ficha cai por HTTP 500', async () => {
+    registrarExecutor('sefaz-bahia', async () => ({
+      sucesso: true,
+      dados: {
+        inscricaoEstadual: '123456789',
+        situacaoCadastral: 'ATIVO',
+        dataSituacaoCadastral: '01/02/2024',
+      },
+    }));
+    registrarExecutor('ficha-cadastral', async () => {
+      throw new EtapaError(
+        'aguardar-download',
+        'HTTP 500 do portal: Crystal Reports falhou ao gerar o relatório oficial',
+      );
+    });
+    const resultado = await executarConsultaInscricoes(
+      montarExecucao('exe_ci_ficha_500', { cnpj: CNPJ_DIGITOS }),
+      sessao,
+      montarDeps().deps,
+    );
+    expect(resultado['sucesso']).toBe(true);
+    const dados = resultado['dados'] as Record<string, unknown>;
+    expect(dados['cnpj']).toBe(CNPJ_DIGITOS);
+    expect(dados['inscricaoEstadual']).toBe('123456789');
+    expect(dados['situacaoEstadual']).toBe('ATIVO');
+    expect(dados['inscricaoMunicipal']).toBeUndefined();
+    expect(String(resultado['mensagem'])).toMatch(/parcial/i);
+    expect(String(resultado['mensagem'])).toContain('Ficha Cadastral');
+    expect(String(resultado['mensagem'])).toMatch(/indisponível/i);
+  });
+
+  it('degrada para sucesso parcial com aviso quando a ficha estoura o tempo', async () => {
+    registrarExecutor('sefaz-bahia', async () => ({
+      sucesso: true,
+      dados: {
+        inscricaoEstadual: '123456789',
+        situacaoCadastral: 'ATIVO',
+        dataSituacaoCadastral: '01/02/2024',
+      },
+    }));
+    registrarExecutor('ficha-cadastral', async () => {
+      throw new TimeoutError('Tempo esgotado durante navegar-portal');
+    });
+    const resultado = await executarConsultaInscricoes(
+      montarExecucao('exe_ci_ficha_tempo', { cnpj: CNPJ_DIGITOS }),
+      sessao,
+      montarDeps().deps,
+    );
+    expect(resultado['sucesso']).toBe(true);
+    const dados = resultado['dados'] as Record<string, unknown>;
+    expect(dados['inscricaoEstadual']).toBe('123456789');
+    expect(dados['inscricaoMunicipal']).toBeUndefined();
+    expect(String(resultado['mensagem'])).toMatch(/parcial/i);
+    expect(String(resultado['mensagem'])).toMatch(/indisponível/i);
+  });
+
+  it('degrada por resposta HTTP 500 observada mesmo sem marcador no texto do erro', async () => {
+    registrarExecutor('sefaz-bahia', async () => ({
+      sucesso: true,
+      dados: {
+        inscricaoEstadual: '123456789',
+        situacaoCadastral: 'ATIVO',
+        dataSituacaoCadastral: '01/02/2024',
+      },
+    }));
+    const armadilha = montarDepsMunicipalComPagina();
+    registrarExecutor('ficha-cadastral', async () => {
+      armadilha.responderMunicipal(
+        500,
+        'https://servicosweb.sefaz.salvador.ba.gov.br/WebsiteV2/Sistemas/AlvaraCgaInternet/Modulos/Principal/AlvaraCgaEmissaoFichaResumidaFrm.aspx',
+      );
+      throw new EtapaError(
+        'aguardar-download',
+        'PDF oficial não baixado e nenhuma mensagem do portal foi encontrada.',
+      );
+    });
+    const resultado = await executarConsultaInscricoes(
+      montarExecucao('exe_ci_ficha_sinal_http', { cnpj: CNPJ_DIGITOS }),
+      sessao,
+      armadilha.deps,
+    );
+    expect(resultado['sucesso']).toBe(true);
+    const dados = resultado['dados'] as Record<string, unknown>;
+    expect(dados['inscricaoEstadual']).toBe('123456789');
+    expect(String(resultado['mensagem'])).toMatch(/parcial/i);
+    expect(String(resultado['mensagem'])).toMatch(/indisponível/i);
+  });
+
+  it('degrada por página de erro do portal mesmo sem marcador no texto do erro', async () => {
+    registrarExecutor('sefaz-bahia', async () => ({
+      sucesso: true,
+      dados: {
+        inscricaoEstadual: '123456789',
+        situacaoCadastral: 'ATIVO',
+        dataSituacaoCadastral: '01/02/2024',
+      },
+    }));
+    const armadilha = montarDepsMunicipalComPagina(
+      '<html><head><title>Server Error</title></head><body><h1>Server Error in \'/\' Application.</h1><p>Runtime Error: Crystal Reports.</p></body></html>',
+    );
+    registrarExecutor('ficha-cadastral', async () => {
+      throw new EtapaError(
+        'aguardar-download',
+        'PDF oficial não baixado e nenhuma mensagem do portal foi encontrada.',
+      );
+    });
+    const resultado = await executarConsultaInscricoes(
+      montarExecucao('exe_ci_ficha_ysod', { cnpj: CNPJ_DIGITOS }),
+      sessao,
+      armadilha.deps,
+    );
+    expect(resultado['sucesso']).toBe(true);
+    const dados = resultado['dados'] as Record<string, unknown>;
+    expect(dados['inscricaoEstadual']).toBe('123456789');
+    expect(String(resultado['mensagem'])).toMatch(/parcial/i);
+    expect(String(resultado['mensagem'])).toMatch(/indisponível/i);
+  });
+
+  it('mantém falha honesta quando o PDF não baixa sem sinal de portal fora', async () => {
+    registrarExecutor('sefaz-bahia', async () => ({
+      sucesso: true,
+      dados: { inscricaoEstadual: '123456789' },
+    }));
+    registrarExecutor('ficha-cadastral', async () => {
+      throw new EtapaError(
+        'aguardar-download',
+        'PDF oficial não baixado e nenhuma mensagem do portal foi encontrada.',
+      );
+    });
+    let erro: unknown = null;
+    try {
+      await executarConsultaInscricoes(
+        montarExecucao('exe_ci_pdf_ausente', { cnpj: CNPJ_DIGITOS }),
+        sessao,
+        montarDeps().deps,
+      );
+    } catch (e) {
+      erro = e;
+    }
+    expect(erro).toBeInstanceOf(EtapaError);
+    expect((erro as EtapaError).etapa).toBe('consultar-municipal');
+  });
+
+  it('mantém falha honesta quando o filho municipal rejeita a entrada', async () => {
+    registrarExecutor('sefaz-bahia', async () => ({
+      sucesso: true,
+      dados: { inscricaoEstadual: '123456789' },
+    }));
+    registrarExecutor('ficha-cadastral', async () => {
+      throw new ValidationError('CNPJ inválido: deve conter 14 dígitos');
+    });
+    let erro: unknown = null;
+    try {
+      await executarConsultaInscricoes(
+        montarExecucao('exe_ci_mun_invalido', { cnpj: CNPJ_DIGITOS }),
+        sessao,
+        montarDeps().deps,
+      );
+    } catch (e) {
+      erro = e;
+    }
+    expect(erro).toBeInstanceOf(EtapaError);
+    expect((erro as EtapaError).etapa).toBe('consultar-municipal');
   });
 });
