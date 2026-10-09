@@ -103,7 +103,7 @@ async function servirPortal(
 function registrarCaptchaFake(capturados: string[]): void {
   registrarResolvedorCaptcha(async (caminhoImagem) => {
     capturados.push(caminhoImagem);
-    return 'AB12';
+    return 'AB12C';
   });
 }
 
@@ -369,7 +369,7 @@ describe('robot cadin-salvador', () => {
   );
 
   it(
-    'retorna sucesso falso com mensagem em português quando não há pendências',
+    'retorna sucesso com lista vazia e mensagem em português quando não há pendências',
     { timeout: 90000 },
     async () => {
       const { sessao, fechar } = await abrirSessao();
@@ -380,10 +380,13 @@ describe('robot cadin-salvador', () => {
           montarExecucao('exe_sem_pendencia', { documento: CNPJ_DIGITOS, artefatos: 'ambos' }),
           sessao,
         );
-        expect(resultado['sucesso']).toBe(false);
+        expect(resultado['sucesso']).toBe(true);
         expect(String(resultado['mensagem'])).toMatch(/Nenhuma pendência/);
         const dados = resultado['dados'] as Record<string, unknown>;
         expect(dados['numeroDocumento']).toBe(CNPJ_DIGITOS);
+        expect(dados['temPendencias']).toBe(false);
+        expect(dados['totalPendencias']).toBe(0);
+        expect(dados['pendencias']).toEqual([]);
         expect(typeof resultado['pdfBase64']).toBe('string');
       } finally {
         await fechar();
@@ -392,7 +395,7 @@ describe('robot cadin-salvador', () => {
   );
 
   it(
-    'retorna sucesso falso com mensagem em português quando o documento não é encontrado',
+    'retorna sucesso com lista vazia e mensagem em português quando o documento não é encontrado',
     { timeout: 90000 },
     async () => {
       const { sessao, fechar } = await abrirSessao();
@@ -407,8 +410,10 @@ describe('robot cadin-salvador', () => {
           montarExecucao('exe_nao_encontrado', { documento: CNPJ_DIGITOS }),
           sessao,
         );
-        expect(resultado['sucesso']).toBe(false);
+        expect(resultado['sucesso']).toBe(true);
         expect(String(resultado['mensagem'])).toMatch(/não encontrado/);
+        const dados = resultado['dados'] as Record<string, unknown>;
+        expect(dados['numeroDocumento']).toBe(CNPJ_DIGITOS);
       } finally {
         await fechar();
       }
@@ -458,7 +463,7 @@ describe('robot cadin-salvador', () => {
         registrar(async (caminhoImagem) => {
           chamadas.push(caminhoImagem);
           falso += 1;
-          return falso === 1 ? '' : 'AB12';
+          return falso === 1 ? '' : 'AB12C';
         });
         const resultado = await executarCadinSalvador(
           montarExecucao('exe_renova_captcha', { documento: CNPJ_DIGITOS }),
@@ -475,15 +480,46 @@ describe('robot cadin-salvador', () => {
   );
 
   it(
+    'não submete leitura fora do tamanho de cinco e recarrega para nova imagem',
+    { timeout: 90000 },
+    async () => {
+      const { sessao, fechar } = await abrirSessao();
+      try {
+        await servirPortal(sessao, formHtml, resultadoHtml);
+        const chamadas: string[] = [];
+        const { registrarResolvedorCaptcha: registrar } = await import(
+          '../../src/automations/base/captcha.js'
+        );
+        let leituras = 0;
+        registrar(async (caminhoImagem) => {
+          chamadas.push(caminhoImagem);
+          leituras += 1;
+          return leituras === 1 ? 'ABCD' : 'ABCDE';
+        });
+        const resultado = await executarCadinSalvador(
+          montarExecucao('exe_tamanho_captcha', { documento: CNPJ_DIGITOS }),
+          sessao,
+        );
+        expect(chamadas.length).toBeGreaterThanOrEqual(2);
+        expect(resultado['sucesso']).toBe(true);
+      } finally {
+        await fechar();
+      }
+    },
+  );
+
+  it(
     'tenta um novo captcha quando o portal rejeita o código e conclui na segunda tentativa',
     { timeout: 90000 },
     async () => {
       const { sessao, fechar } = await abrirSessao();
       try {
         let chamadas = 0;
-        await sessao.page.route('**/default.aspx', (rota) =>
-          rota.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: formHtml }),
-        );
+        let cargasFormulario = 0;
+        await sessao.page.route('**/default.aspx', (rota) => {
+          cargasFormulario += 1;
+          return rota.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: formHtml });
+        });
         await sessao.page.route(
           (url) => url.href.includes('resultado.aspx'),
           (rota) => {
@@ -507,6 +543,7 @@ describe('robot cadin-salvador', () => {
         );
         expect(chamadas).toBe(2);
         expect(capturados).toHaveLength(2);
+        expect(cargasFormulario).toBeGreaterThanOrEqual(2);
         expect(resultado['sucesso']).toBe(true);
         const dados = resultado['dados'] as Record<string, unknown>;
         expect(dados['nome']).toBe('EMPRESA EXEMPLO LTDA');
@@ -518,7 +555,7 @@ describe('robot cadin-salvador', () => {
 
   it(
     'falha rica em português quando o portal rejeita o captcha em todas as tentativas',
-    { timeout: 90000 },
+    { timeout: 240000 },
     async () => {
       const { sessao, fechar } = await abrirSessao();
       try {

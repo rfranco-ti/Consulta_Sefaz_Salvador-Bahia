@@ -286,14 +286,35 @@ export async function resolverCaptchaLocal(
       `Não foi possível ler a imagem do captcha em "${caminhoImagem}".`,
     );
   }
+  if (deps?.reconhecer !== undefined) {
+    return resolverComLeituraUnica(original, deps.reconhecer);
+  }
   let processado: Buffer;
   try {
     processado = await preprocessarCaptchaImagem(original);
   } catch {
     return '';
   }
-  const reconhecer: (buffer: Buffer) => Promise<ResultadoReconhecimento> =
-    deps?.reconhecer ?? reconhecerViaTesseract;
+  return reconhecerComGate(processado, reconhecerViaTesseract);
+}
+
+async function resolverComLeituraUnica(
+  original: Buffer,
+  reconhecer: (buffer: Buffer) => Promise<ResultadoReconhecimento>,
+): Promise<string> {
+  let processado: Buffer;
+  try {
+    processado = await preprocessarCaptchaImagem(original);
+  } catch {
+    return '';
+  }
+  return reconhecerComGate(processado, reconhecer);
+}
+
+async function reconhecerComGate(
+  processado: Buffer,
+  reconhecer: (buffer: Buffer) => Promise<ResultadoReconhecimento>,
+): Promise<string> {
   let resultado: ResultadoReconhecimento;
   try {
     resultado = await executarComFila(() => reconhecer(processado));

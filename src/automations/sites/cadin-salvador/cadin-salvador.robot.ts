@@ -1,7 +1,8 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { Page } from 'playwright-core';
+import type { Page, Request as RequisicaoPlaywright } from 'playwright-core';
 import { z } from 'zod';
 import { BaseRobot, type ExecucaoCtx, type ResultadoRobot } from '../../base/base-robot.js';
 import { resolverCaptcha as decodificarCaptcha } from '../../base/captcha.js';
@@ -22,16 +23,123 @@ import {
   ValidationError,
 } from '../../../shared/errors/index.js';
 
-export const CADIN_SALVADOR_TIMEOUT_MS = 120000;
+export const CADIN_SALVADOR_TIMEOUT_MS = 180000;
 
 const TIMEOUT_NAVEGACAO_MS = 30000;
 const TIMEOUT_RESULTADO_POR_TENTATIVA_MS = 8000;
 const TIMEOUT_IMAGEM_CAPTCHA_MS = 10000;
 const INTERVALO_IMAGEM_CAPTCHA_MS = 250;
+const TIMEOUT_QUIESCENCIA_REDE_MS = 8000;
 const TIMEOUT_TROCA_CAPTCHA_MS = 5000;
 const INTERVALO_SONDAGEM_RESULTADO_MS = 500;
-const MAX_TENTATIVAS_CAPTCHA = 8;
-const MAX_REFRESCOS_CAPTCHA = 2;
+const MAX_TENTATIVAS_CAPTCHA = 12;
+const MAX_REFRESCOS_CAPTCHA = 8;
+const TAMANHO_CODIGO_CAPTCHA = 5;
+const INTERVALO_ESTABILIDADE_CAPTCHA_MS = 500;
+const LEITURAS_ESTABILIDADE_CAPTCHA = 3;
+const IDADE_MINIMA_PAGINA_MS = 8000;
+const DIRETORIO_DIAG = path.join(process.cwd(), 'data', 'diag');
+const ARQUIVO_DIAG_TENTATIVAS = 'cadin-diag-tentativas.jsonl';
+
+interface LeituraCaptcha {
+  codigo: string;
+  caminhoImagem: string;
+  guid: string | null;
+}
+
+interface RegistroDiagTentativa {
+  evento: 'envio' | 'descarte';
+  tentativa: number;
+  documento: string;
+  motivoDescarte: string;
+  guidLido: string | null;
+  codigoOcr: string;
+  codigoEnviado: string;
+  valorNoCampo: string;
+  guidPreClick: string | null;
+  docValorPre: string;
+  docHabilitadoPre: boolean;
+  guidNoSubmit: string | null;
+  guidPosSubmit: string | null;
+  erroPortal: string;
+  imagemLida: string;
+  imagemPreSubmit: string;
+  imagemPosSubmit: string;
+  hashLida: string;
+  hashPreSubmit: string;
+  hashPosSubmit: string;
+  preIgualLida: boolean;
+  idadePaginaMs: number;
+  ocrPreSubmit: string;
+  ocrPosSubmit: string;
+  requisicoes: Array<{ ms: number; metodo: string; url: string }>;
+}
+
+interface RequisicaoDiag {
+  ms: number;
+  metodo: string;
+  url: string;
+  postado: string;
+}
+
+function extrairCaptchaPostado(requisicao: RequisicaoPlaywright): string {
+  let corpo: string | null = null;
+  try {
+    corpo = requisicao.postData();
+  } catch {
+    return '';
+  }
+  if (corpo === null || corpo === '') {
+    return '';
+  }
+  const encontrado = /CaptchaControl1=([^&]*)/.exec(corpo);
+  if (encontrado?.[1] === undefined) {
+    return '';
+  }
+  try {
+    return decodeURIComponent(encontrado[1].replace(/\+/g, ' '));
+  } catch {
+    return encontrado[1];
+  }
+}
+
+function diagAtivo(): boolean {
+  return process.env['CADIN_DIAG'] === '1';
+}
+
+function somenteGuid(fonte: string | null): string | null {
+  if (fonte === null) {
+    return null;
+  }
+  const encontrado = /guid=([A-Za-z0-9-]+)/.exec(fonte);
+  return encontrado?.[1] ?? fonte;
+}
+
+function resumirHash(conteudo: Buffer): string {
+  return createHash('sha256').update(conteudo).digest('hex').slice(0, 12);
+}
+
+async function lerHashArquivo(caminho: string): Promise<string> {
+  if (caminho === '') {
+    return '';
+  }
+  const conteudo: Buffer | undefined = await readFile(caminho).catch(() => undefined);
+  if (conteudo === undefined) {
+    return '';
+  }
+  return resumirHash(conteudo);
+}
+
+async function arquivosIguais(primeiro: string, segundo: string): Promise<boolean> {
+  const [conteudoPrimeiro, conteudoSegundo] = await Promise.all([
+    readFile(primeiro).catch(() => undefined),
+    readFile(segundo).catch(() => undefined),
+  ]);
+  if (conteudoPrimeiro === undefined || conteudoSegundo === undefined) {
+    return false;
+  }
+  return conteudoPrimeiro.equals(conteudoSegundo);
+}
 
 function ehErroCaptchaVazio(erro: unknown): boolean {
   return (
@@ -371,6 +479,7 @@ export class CadinSalvadorRobot extends BaseRobot {
   readonly tipo = 'cadin-salvador';
   readonly nome = 'CADIN Salvador';
   readonly portal = 'PREF_SALVADOR';
+  private ultimaCargaPaginaMs = 0;
 
   async executar(params: Record<string, unknown>, ctx: ExecucaoCtx): Promise<ResultadoRobot> {
     const entrada = cadinSalvadorInputSchema.safeParse(params);
@@ -392,14 +501,14 @@ export class CadinSalvadorRobot extends BaseRobot {
       await this.gerarArtefatos(pagina, ctx, documento, montarDadosRelatorio(dados));
       if (brutos.mensagem === '') {
         return {
-          sucesso: false,
-          dados: { tipoDocumento, numeroDocumento: documento },
+          sucesso: true,
+          dados,
           mensagem: 'Documento não encontrado no CADIN Salvador para o documento informado.',
         };
       }
       if (dados['temPendencias'] !== true) {
         return {
-          sucesso: false,
+          sucesso: true,
           dados,
           mensagem: 'Nenhuma pendência encontrada no CADIN Salvador para o documento informado.',
         };
@@ -428,8 +537,23 @@ export class CadinSalvadorRobot extends BaseRobot {
         waitUntil: config.navegacao.waitUntil,
         timeout: TIMEOUT_NAVEGACAO_MS,
       });
+      await this.aguardarQuiescenciaRede(pagina, ctx);
+      this.ultimaCargaPaginaMs = Date.now();
     } catch (erro) {
       throw normalizarErro('navegar-portal', erro);
+    }
+  }
+
+  private async aguardarQuiescenciaRede(pagina: Page, ctx: ExecucaoCtx): Promise<void> {
+    exigirTempo(ctx.signal, 'navegar-portal');
+    try {
+      await pagina.waitForLoadState('networkidle', { timeout: TIMEOUT_QUIESCENCIA_REDE_MS });
+    } catch {
+      this.emitir(
+        ctx,
+        'warn',
+        'Página do CADIN segue com tráfego de rede — seguindo com a imagem atual.',
+      );
     }
   }
 
@@ -479,7 +603,7 @@ export class CadinSalvadorRobot extends BaseRobot {
     ctx: ExecucaoCtx,
     cadeias: Record<string, CadeiaSeletores>,
     documento: string,
-  ): Promise<void> {
+  ): Promise<LeituraCaptcha> {
     exigirTempo(ctx.signal, 'resolver-captcha');
     this.emitir(ctx, 'log', 'Resolvendo o captcha do portal');
     try {
@@ -495,6 +619,7 @@ export class CadinSalvadorRobot extends BaseRobot {
       await mkdir(diretorio, { recursive: true });
       const caminhoImagem = path.join(diretorio, 'captcha.png');
       await this.aguardarImagemCaptcha(pagina, ctx, imagem);
+      const guid = await this.aguardarCaptchaEstavel(pagina, ctx, cadeias);
       await imagem.screenshot({ path: caminhoImagem });
       const codigo = (await decodificarCaptcha(caminhoImagem)).trim();
       if (codigo === '') {
@@ -503,6 +628,7 @@ export class CadinSalvadorRobot extends BaseRobot {
       const campo = await localizarPorChave(pagina, 'campo_captcha', cadeias, 'resolver-captcha');
       await campo.fill('');
       await campo.fill(codigo);
+      return { codigo, caminhoImagem, guid };
     } catch (erro) {
       throw normalizarErro('resolver-captcha', erro);
     }
@@ -536,6 +662,75 @@ export class CadinSalvadorRobot extends BaseRobot {
     );
   }
 
+  private async aguardarCaptchaEstavel(
+    pagina: Page,
+    ctx: ExecucaoCtx,
+    cadeias: Record<string, CadeiaSeletores>,
+  ): Promise<string | null> {
+    exigirTempo(ctx.signal, 'resolver-captcha');
+    let anterior: string | null = null;
+    let iguais = 0;
+    const limite = LEITURAS_ESTABILIDADE_CAPTCHA + 4;
+    for (let leitura = 0; leitura < limite; leitura += 1) {
+      exigirTempo(ctx.signal, 'resolver-captcha');
+      const atual = await this.fonteCaptchaAtual(pagina, cadeias);
+      if (atual !== null && atual === anterior) {
+        iguais += 1;
+        if (iguais >= LEITURAS_ESTABILIDADE_CAPTCHA) {
+          return atual;
+        }
+      } else {
+        anterior = atual;
+        iguais = atual === null ? 0 : 1;
+      }
+      await pagina.waitForTimeout(INTERVALO_ESTABILIDADE_CAPTCHA_MS);
+    }
+    this.emitir(
+      ctx,
+      'warn',
+      'Imagem do captcha segue trocando antes da leitura — seguindo com a fonte atual.',
+    );
+    return anterior;
+  }
+
+  private async aguardarIdadeMinimaPagina(pagina: Page, ctx: ExecucaoCtx): Promise<number> {
+    exigirTempo(ctx.signal, 'submeter-consulta');
+    const idade = Date.now() - this.ultimaCargaPaginaMs;
+    if (this.ultimaCargaPaginaMs === 0 || idade >= IDADE_MINIMA_PAGINA_MS) {
+      return idade;
+    }
+    await pagina.waitForTimeout(IDADE_MINIMA_PAGINA_MS - idade);
+    return Date.now() - this.ultimaCargaPaginaMs;
+  }
+
+  private async fotografarCaptchaPreSubmit(
+    pagina: Page,
+    ctx: ExecucaoCtx,
+    cadeias: Record<string, CadeiaSeletores>,
+    documento: string,
+    tentativa: number,
+  ): Promise<string | null> {
+    exigirTempo(ctx.signal, 'submeter-consulta');
+    try {
+      const seletores: string[] = cadeias['imagem_captcha']?.seletores ?? [];
+      const imagem = await detectarCaptchaImagem(pagina, seletores);
+      if (imagem === null) {
+        return null;
+      }
+      try {
+        const diretorio = path.join(tmpdir(), 'api-sefaz-ssa', `cadin-salvador-${documento}`);
+        await mkdir(diretorio, { recursive: true });
+        const caminho = path.join(diretorio, `captcha-pre-t${String(tentativa)}.png`);
+        await imagem.screenshot({ path: caminho });
+        return caminho;
+      } finally {
+        await imagem.dispose().catch(() => undefined);
+      }
+    } catch {
+      return null;
+    }
+  }
+
   private async submeterConsulta(
     pagina: Page,
     ctx: ExecucaoCtx,
@@ -545,13 +740,31 @@ export class CadinSalvadorRobot extends BaseRobot {
   ): Promise<void> {
     exigirTempo(ctx.signal, 'submeter-consulta');
     this.emitir(ctx, 'log', 'Submetendo a consulta e aguardando o resultado');
+    const requisicoes: RequisicaoDiag[] = [];
+    const aoObservarRequisicao = (requisicao: RequisicaoPlaywright): void => {
+      const url = requisicao.url();
+      if (url.includes('CaptchaImage') || url.includes('default.aspx')) {
+        requisicoes.push({
+          ms: Date.now(),
+          metodo: requisicao.method(),
+          url,
+          postado: requisicao.method() === 'POST' ? extrairCaptchaPostado(requisicao) : '',
+        });
+      }
+    };
+    if (diagAtivo()) {
+      pagina.on('request', aoObservarRequisicao);
+    }
     try {
       let tentativa = 1;
       let refrescos = 0;
       while (tentativa <= MAX_TENTATIVAS_CAPTCHA) {
         exigirTempo(ctx.signal, 'submeter-consulta');
+        const inicioTentativa = Date.now();
+        const indiceRequisicoes = requisicoes.length;
+        let leitura: LeituraCaptcha;
         try {
-          await this.resolverCaptchaEtapa(pagina, ctx, cadeias, documento);
+          leitura = await this.resolverCaptchaEtapa(pagina, ctx, cadeias, documento);
         } catch (erro) {
           if (ehErroCaptchaVazio(erro) && refrescos < MAX_REFRESCOS_CAPTCHA) {
             refrescos += 1;
@@ -560,24 +773,119 @@ export class CadinSalvadorRobot extends BaseRobot {
               'warn',
               `Leitura do captcha abaixo da qualidade na tentativa ${String(tentativa)} — renovando a imagem ${String(refrescos)} de ${String(MAX_REFRESCOS_CAPTCHA)}.`,
             );
-            await this.renovarCaptcha(pagina, ctx, cadeias, tipoDocumento);
+            await this.renovarCaptcha(pagina, ctx, cadeias, tipoDocumento, documento);
             continue;
           }
           throw erro;
         }
         const botao = await localizarPorChave(pagina, 'botao_consultar', cadeias, 'submeter-consulta');
         const captchaAnterior = await this.fonteCaptchaAtual(pagina, cadeias);
+        const guidPreClick = somenteGuid(captchaAnterior);
+        const imagemEstavel = guidPreClick !== null && guidPreClick === somenteGuid(leitura.guid);
+        const tamanhoValido = leitura.codigo.length === TAMANHO_CODIGO_CAPTCHA;
+        if ((!imagemEstavel || !tamanhoValido) && refrescos < MAX_REFRESCOS_CAPTCHA) {
+          refrescos += 1;
+          const motivo = !imagemEstavel
+            ? 'a imagem trocou durante a leitura'
+            : `a leitura veio com ${String(leitura.codigo.length)} de ${String(TAMANHO_CODIGO_CAPTCHA)} caracteres`;
+          this.emitir(
+            ctx,
+            'warn',
+            `Leitura do captcha descartada na tentativa ${String(tentativa)} (${motivo}) — renovando a imagem ${String(refrescos)} de ${String(MAX_REFRESCOS_CAPTCHA)}.`,
+          );
+          if (diagAtivo()) {
+            await this.registrarDiagDescarte(documento, tentativa, motivo, leitura);
+          }
+          await this.renovarCaptcha(pagina, ctx, cadeias, tipoDocumento, documento);
+          continue;
+        }
+        let codigoEnviado = leitura.codigo;
+        let caminhoPreSubmit = '';
+        let ocrPreSubmit = leitura.codigo;
+        let preIgualLida = true;
+        const fotoPreSubmit = await this.fotografarCaptchaPreSubmit(
+          pagina,
+          ctx,
+          cadeias,
+          documento,
+          tentativa,
+        );
+        if (fotoPreSubmit !== null) {
+          caminhoPreSubmit = fotoPreSubmit;
+          preIgualLida = await arquivosIguais(leitura.caminhoImagem, fotoPreSubmit);
+          if (!preIgualLida) {
+            const releitura = await decodificarCaptcha(fotoPreSubmit)
+              .catch(() => '')
+              .then((texto) => texto.trim());
+            if (releitura === '') {
+              if (refrescos < MAX_REFRESCOS_CAPTCHA) {
+                refrescos += 1;
+                const motivo = 'a imagem trocou antes do envio e a releitura veio vazia';
+                this.emitir(
+                  ctx,
+                  'warn',
+                  `Leitura do captcha descartada na tentativa ${String(tentativa)} (${motivo}) — renovando a imagem ${String(refrescos)} de ${String(MAX_REFRESCOS_CAPTCHA)}.`,
+                );
+                if (diagAtivo()) {
+                  await this.registrarDiagDescarte(documento, tentativa, motivo, leitura);
+                }
+                await this.renovarCaptcha(pagina, ctx, cadeias, tipoDocumento, documento);
+                continue;
+              }
+            } else {
+              codigoEnviado = releitura;
+              ocrPreSubmit = releitura;
+              const campo = await localizarPorChave(pagina, 'campo_captcha', cadeias, 'submeter-consulta');
+              await campo.fill('');
+              await campo.fill(releitura);
+              this.emitir(
+                ctx,
+                'warn',
+                `Imagem do captcha trocou antes do envio na tentativa ${String(tentativa)} — relendo e enviando a leitura nova.`,
+              );
+            }
+          }
+        }
+        const valorNoCampo = diagAtivo() ? await this.valorCampoCaptcha(pagina, cadeias) : '';
+        const docValorPre = diagAtivo() ? await this.valorCampoDocumento(pagina, cadeias) : '';
+        const docHabilitadoPre = diagAtivo()
+          ? await this.campoDocumentoHabilitado(pagina, cadeias)
+          : false;
+        const idadePaginaMs = await this.aguardarIdadeMinimaPagina(pagina, ctx);
         await botao.click();
+        const guidNoSubmit = diagAtivo() ? await this.fonteCaptchaAtual(pagina, cadeias) : null;
         exigirTempo(ctx.signal, 'aguardar-resultado');
         const desfecho = await this.aguardarResultadoOuErro(pagina, ctx, cadeias, captchaAnterior);
+        if (diagAtivo()) {
+          await this.registrarDiagTentativa(pagina, cadeias, documento, tentativa, {
+            guidLido: somenteGuid(leitura.guid),
+            codigoOcr: leitura.codigo,
+            caminhoImagem: leitura.caminhoImagem,
+            caminhoPreSubmit,
+            ocrPreSubmit,
+            codigoEnviado,
+            preIgualLida,
+            idadePaginaMs,
+            valorNoCampo,
+            guidPreClick,
+            docValorPre,
+            docHabilitadoPre,
+            guidNoSubmit: somenteGuid(guidNoSubmit),
+            requisicoes: requisicoes.slice(indiceRequisicoes),
+            inicioTentativa,
+          });
+        }
         if (desfecho === 'resultado') {
           return;
         }
         this.emitir(
           ctx,
           'warn',
-          `O portal rejeitou o código do captcha na tentativa ${String(tentativa)} de ${String(MAX_TENTATIVAS_CAPTCHA)} — fotografando nova imagem.`,
+          `O portal rejeitou o código do captcha na tentativa ${String(tentativa)} de ${String(MAX_TENTATIVAS_CAPTCHA)} — recarregando a página para nova imagem.`,
         );
+        if (tentativa < MAX_TENTATIVAS_CAPTCHA) {
+          await this.renovarCaptcha(pagina, ctx, cadeias, tipoDocumento, documento);
+        }
         tentativa += 1;
       }
       throw new EtapaError(
@@ -586,6 +894,10 @@ export class CadinSalvadorRobot extends BaseRobot {
       );
     } catch (erro) {
       throw normalizarErro('aguardar-resultado', erro);
+    } finally {
+      if (diagAtivo()) {
+        pagina.off('request', aoObservarRequisicao);
+      }
     }
   }
 
@@ -594,51 +906,22 @@ export class CadinSalvadorRobot extends BaseRobot {
     ctx: ExecucaoCtx,
     cadeias: Record<string, CadeiaSeletores>,
     tipoDocumento: 'PF' | 'PJ',
+    documento: string,
   ): Promise<void> {
     exigirTempo(ctx.signal, 'resolver-captcha');
-    const outro = tipoDocumento === 'PF' ? 'radio_pj' : 'radio_pf';
-    const alvo = tipoDocumento === 'PF' ? 'radio_pf' : 'radio_pj';
     try {
-      const anterior = await this.fonteCaptchaAtual(pagina, cadeias);
-      const opcaoOutro = await localizarPorChave(pagina, outro, cadeias, 'resolver-captcha');
-      await opcaoOutro.check({ force: true }).catch(() => opcaoOutro.click({ force: true }));
-      await this.aguardarTrocaCaptcha(pagina, ctx, cadeias, anterior);
-      await this.aguardarCampoHabilitado(pagina, ctx, cadeias);
-      const atual = await this.fonteCaptchaAtual(pagina, cadeias);
-      const opcaoAlvo = await localizarPorChave(pagina, alvo, cadeias, 'resolver-captcha');
-      await opcaoAlvo.check({ force: true }).catch(() => opcaoAlvo.click({ force: true }));
-      await this.aguardarTrocaCaptcha(pagina, ctx, cadeias, atual);
-      await this.aguardarCampoHabilitado(pagina, ctx, cadeias);
+      const config = await obterConfigPortal();
+      await pagina.goto(config.navegacao.url, {
+        waitUntil: config.navegacao.waitUntil,
+        timeout: TIMEOUT_NAVEGACAO_MS,
+      });
+      await this.aguardarQuiescenciaRede(pagina, ctx);
+      this.ultimaCargaPaginaMs = Date.now();
+      await this.selecionarTipoDocumento(pagina, ctx, cadeias, tipoDocumento);
+      await this.preencherDocumento(pagina, ctx, cadeias, documento);
     } catch (erro) {
       throw normalizarErro('resolver-captcha', erro);
     }
-  }
-
-  private async aguardarCampoHabilitado(
-    pagina: Page,
-    ctx: ExecucaoCtx,
-    cadeias: Record<string, CadeiaSeletores>,
-  ): Promise<void> {
-    const seletores = cadeias['campo_documento']?.seletores ?? [];
-    const alvo = seletores[0] ?? 'input';
-    const inicio = Date.now();
-    while (Date.now() - inicio < TIMEOUT_TROCA_CAPTCHA_MS) {
-      exigirTempo(ctx.signal, 'resolver-captcha');
-      const habilitado = await pagina
-        .locator(alvo)
-        .first()
-        .isEnabled()
-        .catch(() => false);
-      if (habilitado) {
-        return;
-      }
-      await pagina.waitForTimeout(INTERVALO_SONDAGEM_RESULTADO_MS);
-    }
-    this.emitir(
-      ctx,
-      'warn',
-      'Campo de documento segue desabilitado após renovar o captcha — seguindo para nova leitura.',
-    );
   }
 
   private async fonteCaptchaAtual(
@@ -653,6 +936,229 @@ export class CadinSalvadorRobot extends BaseRobot {
       return null;
     }
     return localizador.getAttribute('src', { timeout: 2000 }).catch(() => null);
+  }
+
+  private async valorCampoCaptcha(
+    pagina: Page,
+    cadeias: Record<string, CadeiaSeletores>,
+  ): Promise<string> {
+    const seletores = cadeias['campo_captcha']?.seletores ?? [];
+    for (const seletor of seletores) {
+      const valor = await pagina
+        .locator(seletor)
+        .first()
+        .inputValue({ timeout: 2000 })
+        .catch(() => null);
+      if (valor !== null) {
+        return valor;
+      }
+    }
+    return '';
+  }
+
+  private async valorCampoDocumento(
+    pagina: Page,
+    cadeias: Record<string, CadeiaSeletores>,
+  ): Promise<string> {
+    const seletores = cadeias['campo_documento']?.seletores ?? [];
+    for (const seletor of seletores) {
+      const valor = await pagina
+        .locator(seletor)
+        .first()
+        .inputValue({ timeout: 2000 })
+        .catch(() => null);
+      if (valor !== null) {
+        return valor;
+      }
+    }
+    return '';
+  }
+
+  private async campoDocumentoHabilitado(
+    pagina: Page,
+    cadeias: Record<string, CadeiaSeletores>,
+  ): Promise<boolean> {
+    const seletores = cadeias['campo_documento']?.seletores ?? [];
+    for (const seletor of seletores) {
+      const habilitado = await pagina
+        .locator(seletor)
+        .first()
+        .isEnabled({ timeout: 2000 })
+        .catch(() => null);
+      if (habilitado !== null) {
+        return habilitado;
+      }
+    }
+    return false;
+  }
+
+  private async textoErroCaptchaAtual(
+    pagina: Page,
+    cadeias: Record<string, CadeiaSeletores>,
+  ): Promise<string> {
+    const seletores = cadeias['erro_captcha']?.seletores ?? [];
+    for (const seletor of seletores) {
+      const texto = await pagina
+        .locator(seletor)
+        .first()
+        .textContent({ timeout: 2000 })
+        .catch(() => null);
+      if (texto !== null && texto.trim() !== '') {
+        return texto.replace(/\s{2,}/g, ' ').trim();
+      }
+    }
+    return '';
+  }
+
+  private async registrarDiagTentativa(
+    pagina: Page,
+    cadeias: Record<string, CadeiaSeletores>,
+    documento: string,
+    tentativa: number,
+    leitura: {
+      guidLido: string | null;
+      codigoOcr: string;
+      caminhoImagem: string;
+      caminhoPreSubmit: string;
+      ocrPreSubmit: string;
+      codigoEnviado: string;
+      preIgualLida: boolean;
+      idadePaginaMs: number;
+      valorNoCampo: string;
+      guidPreClick: string | null;
+      docValorPre: string;
+      docHabilitadoPre: boolean;
+      guidNoSubmit: string | null;
+      requisicoes: RequisicaoDiag[];
+      inicioTentativa: number;
+    },
+  ): Promise<void> {
+    try {
+      await mkdir(DIRETORIO_DIAG, { recursive: true });
+      const prefixo = `cadin-diag-${documento}-t${String(tentativa).padStart(2, '0')}-${String(Date.now())}`;
+      const imagemLida = `${prefixo}-lida.png`;
+      await readFile(leitura.caminhoImagem)
+        .then((conteudo) => writeFile(path.join(DIRETORIO_DIAG, imagemLida), conteudo))
+        .catch(() => undefined);
+      let imagemPreSubmit = '';
+      if (leitura.caminhoPreSubmit !== '') {
+        imagemPreSubmit = `${prefixo}-pre.png`;
+        await readFile(leitura.caminhoPreSubmit)
+          .then((conteudo) => writeFile(path.join(DIRETORIO_DIAG, imagemPreSubmit), conteudo))
+          .catch(() => undefined);
+      }
+      const guidPosSubmit = somenteGuid(await this.fonteCaptchaAtual(pagina, cadeias));
+      const erroPortal = await this.textoErroCaptchaAtual(pagina, cadeias);
+      let imagemPosSubmit = '';
+      const seletores: string[] = cadeias['imagem_captcha']?.seletores ?? [];
+      const imagem = await detectarCaptchaImagem(pagina, seletores).catch(() => null);
+      if (imagem !== null) {
+        imagemPosSubmit = `${prefixo}-pos.png`;
+        await imagem
+          .screenshot({ path: path.join(DIRETORIO_DIAG, imagemPosSubmit) })
+          .catch(() => undefined);
+        await imagem.dispose().catch(() => undefined);
+      }
+      const caminhoPosSubmit =
+        imagemPosSubmit === '' ? '' : path.join(DIRETORIO_DIAG, imagemPosSubmit);
+      const ocrPosSubmit =
+        caminhoPosSubmit === ''
+          ? ''
+          : await decodificarCaptcha(caminhoPosSubmit)
+              .catch(() => '')
+              .then((texto) => texto.trim());
+      const registro: RegistroDiagTentativa = {
+        evento: 'envio',
+        tentativa,
+        documento,
+        motivoDescarte: '',
+        guidLido: leitura.guidLido,
+        codigoOcr: leitura.codigoOcr,
+        codigoEnviado: leitura.codigoEnviado,
+        valorNoCampo: leitura.valorNoCampo,
+        guidPreClick: leitura.guidPreClick,
+        docValorPre: leitura.docValorPre,
+        docHabilitadoPre: leitura.docHabilitadoPre,
+        guidNoSubmit: leitura.guidNoSubmit,
+        guidPosSubmit,
+        erroPortal,
+        imagemLida,
+        imagemPreSubmit,
+        imagemPosSubmit,
+        hashLida: await lerHashArquivo(path.join(DIRETORIO_DIAG, imagemLida)),
+        hashPreSubmit: await lerHashArquivo(
+          imagemPreSubmit === '' ? '' : path.join(DIRETORIO_DIAG, imagemPreSubmit),
+        ),
+        hashPosSubmit: await lerHashArquivo(caminhoPosSubmit),
+        preIgualLida: leitura.preIgualLida,
+        idadePaginaMs: leitura.idadePaginaMs,
+        ocrPreSubmit: leitura.ocrPreSubmit,
+        ocrPosSubmit,
+        requisicoes: leitura.requisicoes.map((requisicao) => ({
+          ms: requisicao.ms - leitura.inicioTentativa,
+          metodo: requisicao.metodo,
+          url: requisicao.url,
+          postado: requisicao.postado,
+        })),
+      };
+      await appendFile(
+        path.join(DIRETORIO_DIAG, ARQUIVO_DIAG_TENTATIVAS),
+        `${JSON.stringify(registro)}\n`,
+        'utf-8',
+      ).catch(() => undefined);
+    } catch {
+      return;
+    }
+  }
+
+  private async registrarDiagDescarte(
+    documento: string,
+    tentativa: number,
+    motivo: string,
+    leitura: LeituraCaptcha,
+  ): Promise<void> {
+    try {
+      await mkdir(DIRETORIO_DIAG, { recursive: true });
+      const prefixo = `cadin-diag-${documento}-t${String(tentativa).padStart(2, '0')}-${String(Date.now())}`;
+      const imagemLida = `${prefixo}-lida.png`;
+      await readFile(leitura.caminhoImagem)
+        .then((conteudo) => writeFile(path.join(DIRETORIO_DIAG, imagemLida), conteudo))
+        .catch(() => undefined);
+      const registro: RegistroDiagTentativa = {
+        evento: 'descarte',
+        tentativa,
+        documento,
+        motivoDescarte: motivo,
+        guidLido: somenteGuid(leitura.guid),
+        codigoOcr: leitura.codigo,
+        codigoEnviado: '',
+        valorNoCampo: '',
+        guidPreClick: null,
+        docValorPre: '',
+        docHabilitadoPre: false,
+        guidNoSubmit: null,
+        guidPosSubmit: null,
+        erroPortal: '',
+        imagemLida,
+        imagemPreSubmit: '',
+        imagemPosSubmit: '',
+        hashLida: await lerHashArquivo(path.join(DIRETORIO_DIAG, imagemLida)),
+        hashPreSubmit: '',
+        hashPosSubmit: '',
+        preIgualLida: false,
+        idadePaginaMs: 0,
+        ocrPreSubmit: '',
+        ocrPosSubmit: '',
+        requisicoes: [],
+      };
+      await appendFile(
+        path.join(DIRETORIO_DIAG, ARQUIVO_DIAG_TENTATIVAS),
+        `${JSON.stringify(registro)}\n`,
+        'utf-8',
+      ).catch(() => undefined);
+    } catch {
+      return;
+    }
   }
 
   private async aguardarTrocaCaptcha(

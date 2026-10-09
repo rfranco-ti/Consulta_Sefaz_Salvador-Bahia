@@ -1,10 +1,14 @@
-import { mkdir, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { preprocessarCaptchaImagem } from '../../src/automations/base/captcha/preprocessamento.js';
+import {
+  preprocessarCaptchaImagem,
+  preprocessarCaptchaImagemSemBolhas,
+} from '../../src/automations/base/captcha/preprocessamento.js';
 import {
   combinarLeituras,
   encerrarWorkerCaptcha,
@@ -79,6 +83,20 @@ describe('preprocessamento de captcha', () => {
       }
     }
     expect(invalidos).toBe(0);
+  });
+
+  it('mantém a saída determinística com dupla passada de mediana no captcha real', async (): Promise<void> => {
+    const entrada: Buffer = await readFile(CAMINHO_FIXTURE_CAPTCHA_REAL);
+    const saida: Buffer = await preprocessarCaptchaImagem(entrada);
+    const resumo: string = createHash('sha256').update(saida).digest('hex');
+    expect(resumo).toBe('810ac4438adba4ed002158a2343117e3f1dd05036649c87a50f1bf9255b32a9d');
+  });
+
+  it('mantém a saída determinística sem bolhas com filtro de linearidade no captcha real', async (): Promise<void> => {
+    const entrada: Buffer = await readFile(CAMINHO_FIXTURE_CAPTCHA_REAL);
+    const saida: Buffer = await preprocessarCaptchaImagemSemBolhas(entrada);
+    const resumo: string = createHash('sha256').update(saida).digest('hex');
+    expect(resumo).toBe('d3c98c377584ac3a5342682f0bb820bb08ff338c8dc5db918d82f8ebaf6b1ff8');
   });
 });
 
@@ -309,7 +327,7 @@ describe('resolvedor local de captcha com imagem real', () => {
   );
 
   it.runIf(MODELO_TESSERACT_DISPONIVEL)(
-    'usa o fallback de segmentação em vez de vazio quando o ensemble não passa no gate',
+    'retorna a leitura da via única no captcha difícil em vez de vazio',
     { timeout: TEMPO_LIMITE_OCR_REAL_MS },
     async (): Promise<void> => {
       const caminhoDificil: string = path.join(
