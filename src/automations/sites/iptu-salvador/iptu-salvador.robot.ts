@@ -24,6 +24,8 @@ export const IPTU_SALVADOR_TIMEOUT_MS = 90000;
 
 const TIMEOUT_NAVEGACAO_MS = 30000;
 const TIMEOUT_RESULTADO_POR_TENTATIVA_MS = 8000;
+const TIMEOUT_POPUP_MS = 20000;
+const TEMPO_ASSENTAMENTO_POS_PREENCHIMENTO_MS = 1500;
 
 export const iptuSalvadorInputSchema = z.object({
   numeroIptu: z
@@ -154,6 +156,7 @@ function extrairCertidao(): Record<string, string> {
     dataEmissao: obter('LbdtEmissao'),
     textoCertidao: obter('LbTextoCertidao'),
     codigoControle: obter('LbCodigoControleCertidao'),
+    textoValidade: obter('LbTextoValidade'),
     textoRodape: obter('LbTextoRodape'),
     textoBruto: document.body?.innerText ?? '',
   };
@@ -202,8 +205,13 @@ function normalizarDados(numeroBuscado: string, brutos: Record<string, string>):
     dataEmissao: obter('dataEmissao'),
     textoCertidao: obter('textoCertidao'),
     codigoControle: obter('codigoControle'),
+    textoValidade: obter('textoValidade'),
     textoRodape: obter('textoRodape'),
   };
+}
+
+export function nomePdfIptuSalvador(numeroIptu: string): string {
+  return `DADOS-CADASTRAIS-IPTU_${numeroIptu}.PDF`;
 }
 
 export class IptuSalvadorRobot extends BaseRobot {
@@ -227,15 +235,23 @@ export class IptuSalvadorRobot extends BaseRobot {
       this.emitir(ctx, 'log', `Iniciando consulta IPTU Salvador para a inscrição ${numeroIptu}`);
       await this.navegar(pagina, ctx, config);
       await this.preencherInscricao(pagina, ctx, cadeias, numeroIptu);
-      await this.submeterConsulta(pagina, ctx, cadeias);
-      const brutos = await this.extrairDados(pagina, ctx);
+      const popup = await this.submeterConsulta(pagina, ctx, cadeias);
+      if (popup === null) {
+        return {
+          sucesso: false,
+          dados: { numeroIptuBuscado: numeroIptu },
+          mensagem:
+            'Inscrição imobiliária não encontrada ou sem certidão de dados cadastrais para o número informado.',
+        };
+      }
+      const brutos = await this.extrairDados(popup, ctx);
       const dados = normalizarDados(numeroIptu, brutos);
-      await this.gerarArtefatos(pagina, ctx, numeroIptu);
+      await this.gerarArtefatos(popup, ctx, numeroIptu);
       if (dados['inscricao'] === '') {
         return {
           sucesso: false,
           dados: { numeroIptuBuscado: numeroIptu },
-          mensagem: 'Inscrição imobiliária não encontrada para o número informado.',
+          mensagem: 'Inscrição imobiliária não encontrada ou sem certidão de dados cadastrais para o número informado.',
         };
       }
       this.emitir(
@@ -279,6 +295,8 @@ export class IptuSalvadorRobot extends BaseRobot {
       const campo = await localizarPorChave(pagina, 'campo_inscricao', cadeias, 'preencher-inscricao');
       await campo.fill('');
       await campo.fill(numeroIptu);
+      await campo.press('Tab').catch(() => undefined);
+      await pagina.waitForTimeout(TEMPO_ASSENTAMENTO_POS_PREENCHIMENTO_MS);
     } catch (erro) {
       throw normalizarErro('preencher-inscricao', erro);
     }
@@ -288,20 +306,30 @@ export class IptuSalvadorRobot extends BaseRobot {
     pagina: Page,
     ctx: ExecucaoCtx,
     cadeias: Record<string, CadeiaSeletores>,
-  ): Promise<void> {
+  ): Promise<Page | null> {
     exigirTempo(ctx.signal, 'submeter-consulta');
-    this.emitir(ctx, 'log', 'Submetendo a consulta e aguardando a certidão');
+    this.emitir(ctx, 'log', 'Submetendo a consulta e aguardando a certidão em nova janela');
     try {
       const botao = await localizarPorChave(pagina, 'botao_consultar', cadeias, 'submeter-consulta');
+      const esperaPopup = pagina.context().waitForEvent('page', { timeout: TIMEOUT_POPUP_MS });
       await botao.click();
       exigirTempo(ctx.signal, 'aguardar-resultado');
+      const popup = await esperaPopup.then(
+        (nova) => nova,
+        () => null,
+      );
+      if (popup === null) {
+        return null;
+      }
+      await popup.waitForLoadState('domcontentloaded', { timeout: TIMEOUT_NAVEGACAO_MS }).catch(() => undefined);
       await localizarPorChave(
-        pagina,
+        popup,
         'bloco_resultado',
         cadeias,
         'aguardar-resultado',
         TIMEOUT_RESULTADO_POR_TENTATIVA_MS,
       );
+      return popup;
     } catch (erro) {
       throw normalizarErro('aguardar-resultado', erro);
     }
@@ -334,7 +362,7 @@ export class IptuSalvadorRobot extends BaseRobot {
       }
       if (ctx.artefatos === 'pdf' || ctx.artefatos === 'ambos') {
         const pdf = await pagina.pdf({ format: 'A4', printBackground: true });
-        const caminhoPdf = path.join(diretorio, 'pagina.pdf');
+        const caminhoPdf = path.join(diretorio, nomePdfIptuSalvador(numeroIptu));
         await writeFile(caminhoPdf, pdf);
         ctx.registrarArquivo('pdf_pagina', caminhoPdf, 'application/pdf');
       }

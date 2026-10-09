@@ -5,16 +5,18 @@ import { chromium, type Browser } from 'playwright-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   executarIptuSalvador,
+  IptuSalvadorRobot,
   iptuSalvadorInputSchema,
 } from '../../src/automations/sites/iptu-salvador/iptu-salvador.robot.js';
+import type { ExecucaoCtx } from '../../src/automations/base/base-robot.js';
 import type { Execucao } from '../../src/database/index.js';
 import type { BrowserSession } from '../../src/modules/browser/browser.types.js';
 import { obterExecutor } from '../../src/modules/jobs/executor.js';
 import { obterCanalProgresso } from '../../src/modules/jobs/progresso.js';
 import { EtapaError, ValidationError } from '../../src/shared/errors/index.js';
 
-const NUMERO_MASCARA = ' 00123-456 ';
-const NUMERO_DIGITOS = '00123456';
+const NUMERO_MASCARA = '809741-0';
+const NUMERO_DIGITOS = '8097410';
 
 const diretorioFixtures = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -28,7 +30,8 @@ async function lerFixture(nome: string): Promise<string> {
 
 let navegador: Browser;
 let formHtml = '';
-let resultadoHtml = '';
+let formPopupHtml = '';
+let popupHtml = '';
 let resultadoSemInscricaoHtml = '';
 
 function montarExecucao(id: string, carga: unknown): Execucao {
@@ -68,24 +71,35 @@ async function abrirSessao(): Promise<{ sessao: BrowserSession; fechar: () => Pr
   return { sessao, fechar: () => sessao.liberar() };
 }
 
-async function servirPortal(
+async function servirPopup(
   sessao: BrowserSession,
   formulario: string,
-  resultado: string,
+  popup: string,
 ): Promise<void> {
   await sessao.page.route('**/CertidaoDadosCadastraisFrm.aspx', (rota) =>
     rota.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: formulario }),
   );
-  await sessao.page.route(
+  await sessao.context.route(
+    (url) => url.href.includes('CertidaoDadosCadastraisEmissaoDtl.aspx'),
+    (rota) => rota.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: popup }),
+  );
+}
+
+async function servirSemPopup(sessao: BrowserSession, formulario: string): Promise<void> {
+  await sessao.page.route('**/CertidaoDadosCadastraisFrm.aspx', (rota) =>
+    rota.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: formulario }),
+  );
+  await sessao.context.route(
     (url) => url.href.includes('CertidaoResultado.aspx'),
-    (rota) => rota.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: resultado }),
+    (rota) => rota.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: formulario }),
   );
 }
 
 beforeAll(async () => {
   navegador = await chromium.launch({ headless: true });
   formHtml = await lerFixture('iptu-salvador-form.html');
-  resultadoHtml = await lerFixture('iptu-salvador-resultado.html');
+  formPopupHtml = await lerFixture('iptu-salvador-form-popup.html');
+  popupHtml = await lerFixture('iptu-salvador-popup.html');
   resultadoSemInscricaoHtml = await lerFixture('iptu-salvador-resultado-sem-inscricao.html');
 }, 60000);
 
@@ -99,7 +113,7 @@ describe('robot iptu-salvador', () => {
   });
 
   it('aceita número com máscara e normaliza para dígitos', () => {
-    const parsed = iptuSalvadorInputSchema.safeParse({ numeroIptu: NUMERO_MASCARA });
+    const parsed = iptuSalvadorInputSchema.safeParse({ numeroIptu: ' 809741-0 ' });
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       expect(parsed.data.numeroIptu).toBe(NUMERO_DIGITOS);
@@ -139,36 +153,61 @@ describe('robot iptu-salvador', () => {
   );
 
   it(
-    'executa o fluxo completo offline e extrai a certidão com artefatos',
+    'captura o popup da certidão e extrai a certidão completa',
     { timeout: 90000 },
     async () => {
       const { sessao, fechar } = await abrirSessao();
       try {
-        await servirPortal(sessao, formHtml, resultadoHtml);
+        await servirPopup(sessao, formPopupHtml, popupHtml);
         const etapas: Array<string | undefined> = [];
-        const deixar = obterCanalProgresso().observar('exe_fluxo_feliz', (evento) => {
+        const deixar = obterCanalProgresso().observar('exe_fluxo_popup', (evento) => {
           etapas.push(evento.etapa);
         });
         try {
           const resultado = await executarIptuSalvador(
-            montarExecucao('exe_fluxo_feliz', { numeroIptu: NUMERO_MASCARA, artefatos: 'ambos' }),
+            montarExecucao('exe_fluxo_popup', { numeroIptu: NUMERO_MASCARA, artefatos: 'ambos' }),
             sessao,
           );
           expect(resultado['sucesso']).toBe(true);
           const dados = resultado['dados'] as Record<string, string>;
           expect(dados['numeroIptuBuscado']).toBe(NUMERO_DIGITOS);
-          expect(dados['inscricao']).toBe('00123456');
-          expect(dados['titulo']).toBe('CERTIDÃO DE DADOS CADASTRAIS');
-          expect(dados['contribuinte']).toBe('JOSE DA SILVA');
-          expect(dados['cpfCnpj']).toBe('123.456.789-01');
-          expect(dados['endereco']).toBe('RUA DAS FLORES');
-          expect(dados['bairro']).toBe('CENTRO');
-          expect(dados['cep']).toBe('40000-000');
-          expect(dados['valorVenal']).toBe('150000,00');
-          expect(dados['situacaoCadastral']).toBe('ATIVA');
-          expect(dados['situacaoFiscal']).toBe('REGULAR');
-          expect(dados['codigoControle']).toBe('ABC123XYZ');
-          expect(dados['dataEmissao']).toBe('05/10/2026');
+          expect(dados['titulo']).toBe('Certidão de Dados Cadastrais Utilizados para Cálculo do IPTU 2026');
+          expect(dados['inscricao']).toBe('809741-0');
+          expect(dados['cib']).toBe('7VEP9F5X');
+          expect(dados['inscricaoMae']).toBe('-');
+          expect(dados['contribuinte']).toBe('ALEXSANDRO SANTOS BARROS');
+          expect(dados['cpfCnpj']).toBe('889.763.515-68');
+          expect(dados['endereco']).toBe('Avenida Engenheiro Oscar Pontes');
+          expect(dados['numeroMetrico']).toBe('5');
+          expect(dados['numeroPorta']).toBe('05');
+          expect(dados['loteamento']).toBe('');
+          expect(dados['quadra']).toBe('');
+          expect(dados['lote']).toBe('');
+          expect(dados['conjunto']).toBe('');
+          expect(dados['edificio']).toBe('');
+          expect(dados['bloco']).toBe('');
+          expect(dados['subUnidadeCod']).toBe('BX');
+          expect(dados['subUnidadeNome']).toBe('Box');
+          expect(dados['numSubUnidade']).toBe('');
+          expect(dados['bairro']).toBe('COMÉRCIO');
+          expect(dados['cep']).toBe('40015-600');
+          expect(dados['complemento']).toBe('');
+          expect(dados['areaTerreno']).toBe('40,00');
+          expect(dados['fracaoIdeal']).toBe('0,00');
+          expect(dados['areaConstruida']).toBe('40,00');
+          expect(dados['areaTotal']).toBe('0,00');
+          expect(dados['valorVenal']).toBe('R$ 94.689,40');
+          expect(dados['tipoImovel']).toBe('Comercial');
+          expect(dados['padraoConstrutivo']).toBe('A1');
+          expect(dados['logradouroTrib']).toBe('3277 - Avenida Engenheiro Oscar Pontes');
+          expect(dados['dataLancamento']).toBe('01/01/2014');
+          expect(dados['situacaoCadastral']).toBe('Ativo');
+          expect(dados['situacaoFiscal']).toBe('Contribuinte');
+          expect(dados['dataEmissao']).toBe('09/10/2026 15:46:32');
+          expect(dados['textoCertidao']).toMatch(/Ressalvado o direito/);
+          expect(dados['codigoControle']).toMatch(/E02F63C175CB21E0F6B0A1230D5ACB11/);
+          expect(dados['textoValidade']).toBe('');
+          expect(dados['textoRodape']).toMatch(/autenticidade/);
           expect(resultado['mensagem']).toMatch(/sucesso/);
           expect(typeof resultado['printBase64']).toBe('string');
           expect((resultado['printBase64'] as string).startsWith('/9j')).toBe(true);
@@ -186,12 +225,43 @@ describe('robot iptu-salvador', () => {
   );
 
   it(
+    'nomeia o PDF do popup com o padrão DADOS-CADASTRAIS-IPTU_<NUMERO>.PDF',
+    { timeout: 90000 },
+    async () => {
+      const { sessao, fechar } = await abrirSessao();
+      try {
+        await servirPopup(sessao, formPopupHtml, popupHtml);
+        const registrados: Array<{ tipo: string; caminho: string }> = [];
+        const ctx: ExecucaoCtx = {
+          sessao,
+          emitir: () => undefined,
+          registrarArquivo: (tipo, caminho, _contentType) => {
+            registrados.push({ tipo: String(tipo), caminho });
+          },
+          artefatos: 'pdf',
+          signal: AbortSignal.timeout(60000),
+        };
+        const robo = new IptuSalvadorRobot();
+        const resultado = await robo.executar({ numeroIptu: NUMERO_MASCARA }, ctx);
+        expect(resultado.sucesso).toBe(true);
+        const pdfs = registrados.filter((r) => r.tipo === 'pdf_pagina');
+        expect(pdfs.length).toBe(1);
+        expect(path.basename(pdfs[0]?.caminho ?? '')).toBe(
+          `DADOS-CADASTRAIS-IPTU_${NUMERO_DIGITOS}.PDF`,
+        );
+      } finally {
+        await fechar();
+      }
+    },
+  );
+
+  it(
     'não gera artefatos quando artefatos é nenhum',
     { timeout: 90000 },
     async () => {
       const { sessao, fechar } = await abrirSessao();
       try {
-        await servirPortal(sessao, formHtml, resultadoHtml);
+        await servirPopup(sessao, formPopupHtml, popupHtml);
         const resultado = await executarIptuSalvador(
           montarExecucao('exe_sem_artefatos', { numeroIptu: NUMERO_DIGITOS }),
           sessao,
@@ -211,18 +281,18 @@ describe('robot iptu-salvador', () => {
     async () => {
       const { sessao, fechar } = await abrirSessao();
       try {
-        const formSemId = formHtml.replace(
+        const formSemId = formPopupHtml.replace(
           'id="ctl00_ContentPlaceHolderPrincipal_txtCdInscricao" ',
           '',
         );
-        await servirPortal(sessao, formSemId, resultadoHtml);
+        await servirPopup(sessao, formSemId, popupHtml);
         const resultado = await executarIptuSalvador(
           montarExecucao('exe_fallback', { numeroIptu: NUMERO_DIGITOS }),
           sessao,
         );
         expect(resultado['sucesso']).toBe(true);
         const dados = resultado['dados'] as Record<string, string>;
-        expect(dados['inscricao']).toBe('00123456');
+        expect(dados['inscricao']).toBe('809741-0');
       } finally {
         await fechar();
       }
@@ -235,11 +305,11 @@ describe('robot iptu-salvador', () => {
     async () => {
       const { sessao, fechar } = await abrirSessao();
       try {
-        const formSemCampo = formHtml.replace(
+        const formSemCampo = formPopupHtml.replace(
           '<input type="text" id="ctl00_ContentPlaceHolderPrincipal_txtCdInscricao" name="ctl00$ContentPlaceHolderPrincipal$txtCdInscricao" placeholder="Inscrição imobiliária" maxlength="10" />',
           '',
         );
-        await servirPortal(sessao, formSemCampo, resultadoHtml);
+        await servirPopup(sessao, formSemCampo, popupHtml);
         let erro: unknown = null;
         try {
           await executarIptuSalvador(montarExecucao('exe_sem_campo', { numeroIptu: NUMERO_DIGITOS }), sessao);
@@ -257,12 +327,33 @@ describe('robot iptu-salvador', () => {
   );
 
   it(
-    'retorna sucesso falso com mensagem em português quando falta a inscrição',
+    'retorna falha clara sem inventar mensagem quando o portal não abre popup',
     { timeout: 90000 },
     async () => {
       const { sessao, fechar } = await abrirSessao();
       try {
-        await servirPortal(sessao, formHtml, resultadoSemInscricaoHtml);
+        await servirSemPopup(sessao, formHtml);
+        const resultado = await executarIptuSalvador(
+          montarExecucao('exe_sem_popup', { numeroIptu: NUMERO_DIGITOS }),
+          sessao,
+        );
+        expect(resultado['sucesso']).toBe(false);
+        const dados = resultado['dados'] as Record<string, string>;
+        expect(dados['numeroIptuBuscado']).toBe(NUMERO_DIGITOS);
+        expect(String(resultado['mensagem'])).toMatch(/sem certidão/);
+      } finally {
+        await fechar();
+      }
+    },
+  );
+
+  it(
+    'retorna sucesso falso com mensagem em português quando falta a inscrição no popup',
+    { timeout: 90000 },
+    async () => {
+      const { sessao, fechar } = await abrirSessao();
+      try {
+        await servirPopup(sessao, formPopupHtml, resultadoSemInscricaoHtml);
         const resultado = await executarIptuSalvador(
           montarExecucao('exe_sem_inscricao', { numeroIptu: NUMERO_DIGITOS }),
           sessao,

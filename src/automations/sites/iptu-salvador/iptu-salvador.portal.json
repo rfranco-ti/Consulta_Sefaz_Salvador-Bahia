@@ -39,7 +39,8 @@
       ]
     },
     "bloco_resultado": {
-      "descricao": "Sinal de que a certidão de dados cadastrais carregou",
+      "descricao": "Sinal de que a certidão de dados cadastrais carregou DENTRO do popup CertidaoDadosCadastraisEmissaoDtl.aspx",
+      "janela": "popup",
       "seletores": [
         "#ctl00_ContentPlaceHolderPrincipal_UCCertidaoDadosCadastrais_LbCdInscricaoImob",
         "text=CERTIDÃO DE DADOS CADASTRAIS",
@@ -61,13 +62,13 @@
     },
     {
       "id": "submeter-consulta",
-      "descricao": "Clica em Consultar",
+      "descricao": "Clica em Consultar e captura o popup CertidaoDadosCadastraisEmissaoDtl.aspx via espera de nova janela",
       "acao": "clicar",
       "chaveSeletor": "botao_consultar"
     },
     {
       "id": "aguardar-resultado",
-      "descricao": "Aguarda o bloco da certidão carregar",
+      "descricao": "Aguarda o bloco da certidão carregar DENTRO do popup; ausência de popup significa inscrição sem certidão",
       "acao": "esperar",
       "chaveSeletor": "bloco_resultado"
     },
@@ -78,7 +79,7 @@
     },
     {
       "id": "gerar-artefatos",
-      "descricao": "Gera print e PDF após a extração",
+      "descricao": "Gera print e PDF da página do popup após a extração",
       "acao": "capturar-download"
     }
   ],
