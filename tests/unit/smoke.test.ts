@@ -16,6 +16,7 @@ import {
   linhaDoDesfecho,
   montarRelatorio,
   nomeVariavelDoTipo,
+  normalizarExecucao,
   parsearApenas,
   validarPayloadDoTipo,
   type ItemPlano,
@@ -318,6 +319,102 @@ describe('relatório e exit code', () => {
     ]);
     expect(relatorio.exitCode).toBe(1);
     expect(relatorio.texto).toContain('Resumo: 1 ok, 1 fail, 0 skip, 1 timeout');
+  });
+});
+
+describe('marcador CACHE', () => {
+  it('OK com cacheHit marca CACHE na observação', () => {
+    const saida = linhaDoDesfecho({
+      tipo: 'sefaz-bahia',
+      status: 'SUCCESS',
+      sucesso: true,
+      duracaoMs: 800,
+      erro: null,
+      cacheHit: true,
+    });
+    expect(saida.resultado).toBe('OK');
+    expect(saida.observacao).toBe('CACHE');
+  });
+
+  it('OK sem cacheHit mantém observação vazia', () => {
+    const saida = linhaDoDesfecho({
+      tipo: 'sefaz-bahia',
+      status: 'SUCCESS',
+      sucesso: true,
+      duracaoMs: 8000,
+      erro: null,
+    });
+    expect(saida.resultado).toBe('OK');
+    expect(saida.observacao).toBe('');
+  });
+
+  it('FAIL com cacheHit preserva o erro e acrescenta CACHE', () => {
+    const saida = linhaDoDesfecho({
+      tipo: 'dam-tff-tll',
+      status: 'FAILED',
+      sucesso: null,
+      duracaoMs: 5000,
+      erro: 'PORTAL_INDISPONIVEL: portal fora do ar',
+      cacheHit: true,
+    });
+    expect(saida.resultado).toBe('FAIL');
+    expect(saida.observacao).toContain('PORTAL_INDISPONIVEL');
+    expect(saida.observacao).toContain('CACHE');
+  });
+
+  it('relatório exibe CACHE na coluna OBS', () => {
+    const relatorio = montarRelatorio([
+      { tipo: 'sefaz-bahia', resultado: 'OK', duracaoMs: 800, observacao: 'CACHE' },
+      { tipo: 'iptu-salvador', resultado: 'OK', duracaoMs: 9000, observacao: '' },
+    ]);
+    expect(relatorio.texto).toContain('sefaz-bahia | OK | 0,8s | CACHE');
+    expect(relatorio.texto).toContain('iptu-salvador | OK | 9,0s | -');
+  });
+});
+
+describe('normalizarExecucao', () => {
+  it('lê o hit de cache da resposta plana do POST', () => {
+    const saida = normalizarExecucao({
+      execucaoId: 'exe_cacheada',
+      status: 'SUCCESS',
+      sucesso: true,
+      dados: { situacao: 'ativa' },
+      cache: { hit: true, camada: 'memoria', ttlRestanteSeg: 300 },
+      duracaoMs: 0,
+    });
+    expect(saida?.status).toBe('SUCCESS');
+    expect(saida?.cache).toMatchObject({ hit: true });
+    expect(saida?.duracaoMs).toBe(0);
+  });
+
+  it('lê o miss de cache da resposta de polling', () => {
+    const saida = normalizarExecucao({
+      execucaoId: 'exe_aovivo',
+      status: 'SUCCESS',
+      resultado: { sucesso: true, dados: { situacao: 'ativa' } },
+      cache: { hit: false },
+      duracaoMs: 9000,
+    });
+    expect(saida?.status).toBe('SUCCESS');
+    expect(saida?.cache).toMatchObject({ hit: false });
+    expect(saida?.resultado?.sucesso).toBe(true);
+  });
+
+  it('resposta sem cache resulta em cache ausente', () => {
+    const saida = normalizarExecucao({ execucaoId: 'exe_antiga', status: 'RUNNING' });
+    expect(saida?.status).toBe('RUNNING');
+    expect(saida?.cache).toBeUndefined();
+  });
+
+  it('cache com formato inesperado é ignorado sem derrubar a resposta', () => {
+    const saida = normalizarExecucao({
+      execucaoId: 'exe_estranha',
+      status: 'SUCCESS',
+      resultado: { sucesso: true, dados: {} },
+      cache: { hit: 'sim' },
+    });
+    expect(saida?.status).toBe('SUCCESS');
+    expect(saida?.cache).toBeUndefined();
   });
 });
 

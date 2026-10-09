@@ -43,79 +43,6 @@ function extrairMensagemErro(corpo: unknown, status: number): string {
   return 'http ' + String(status);
 }
 
-function copiarResultado(
-  fonte: Record<string, unknown>,
-): { sucesso: boolean; dados: Record<string, unknown>; mensagem?: string } | null {
-  const sucesso = fonte['sucesso'];
-  const dados: unknown = fonte['dados'];
-  if (typeof sucesso !== 'boolean' || typeof dados !== 'object' || dados === null) {
-    return null;
-  }
-  if (Array.isArray(dados)) {
-    return null;
-  }
-  const saida: { sucesso: boolean; dados: Record<string, unknown>; mensagem?: string } = {
-    sucesso,
-    dados: dados as Record<string, unknown>,
-  };
-  const mensagem = fonte['mensagem'];
-  if (typeof mensagem === 'string' && mensagem !== '') {
-    saida.mensagem = mensagem;
-  }
-  return saida;
-}
-
-function normalizarExecucao(corpo: unknown): ExecucaoResposta | null {
-  if (typeof corpo !== 'object' || corpo === null || Array.isArray(corpo)) {
-    return null;
-  }
-  const registro = corpo as Record<string, unknown>;
-  const execucaoId = registro['execucaoId'];
-  const status = registro['status'];
-  if (typeof execucaoId !== 'string' || typeof status !== 'string') {
-    return null;
-  }
-  if (
-    status !== 'PENDING' &&
-    status !== 'RUNNING' &&
-    status !== 'SUCCESS' &&
-    status !== 'FAILED' &&
-    status !== 'CANCELLED'
-  ) {
-    return null;
-  }
-  const saida: ExecucaoResposta = {
-    execucaoId,
-    status: status as ExecucaoResposta['status'],
-  };
-  const aninhado = registro['resultado'];
-  if (typeof aninhado === 'object' && aninhado !== null && !Array.isArray(aninhado)) {
-    const copiado = copiarResultado(aninhado as Record<string, unknown>);
-    if (copiado !== null) {
-      saida.resultado = copiado;
-    }
-  } else {
-    const copiado = copiarResultado(registro);
-    if (copiado !== null) {
-      saida.resultado = copiado;
-    }
-  }
-  const erro = registro['error'];
-  if (typeof erro === 'object' && erro !== null && !Array.isArray(erro)) {
-    const detalhe = erro as Record<string, unknown>;
-    const codigo = detalhe['code'];
-    const mensagem = detalhe['message'];
-    if (typeof codigo === 'string' && typeof mensagem === 'string') {
-      saida.error = { code: codigo, message: mensagem };
-    }
-  }
-  const duracao = registro['duracaoMs'];
-  if (typeof duracao === 'number') {
-    saida.duracaoMs = duracao;
-  }
-  return saida;
-}
-
 function dormir(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -155,6 +82,7 @@ async function postAutomacao(
   chaveApi: string,
   tipo: TipoAutomacao,
   payload: Record<string, unknown>,
+  normalizar: (corpo: unknown) => ExecucaoResposta | null,
 ): Promise<SaidaChamada> {
   let resposta: Response;
   try {
@@ -176,7 +104,7 @@ async function postAutomacao(
   if (!resposta.ok) {
     return { resposta: null, falha: extrairMensagemErro(corpo, resposta.status) };
   }
-  const execucao = normalizarExecucao(corpo);
+  const execucao = normalizar(corpo);
   if (execucao === null) {
     return { resposta: null, falha: 'resposta inesperada do servidor no POST' };
   }
@@ -187,6 +115,7 @@ async function getExecucao(
   base: string,
   chaveApi: string,
   execucaoId: string,
+  normalizar: (corpo: unknown) => ExecucaoResposta | null,
 ): Promise<SaidaChamada> {
   let resposta: Response;
   try {
@@ -206,7 +135,7 @@ async function getExecucao(
   if (!resposta.ok) {
     return { resposta: null, falha: extrairMensagemErro(corpo, resposta.status) };
   }
-  const execucao = normalizarExecucao(corpo);
+  const execucao = normalizar(corpo);
   if (execucao === null) {
     return { resposta: null, falha: 'resposta inesperada do servidor no polling' };
   }
@@ -221,7 +150,7 @@ async function executarRobot(
   nucleo: typeof import('./smoke-nucleo.js'),
 ): Promise<LinhaRelatorio> {
   const inicio = Date.now();
-  const criado = await postAutomacao(base, chaveApi, tipo, payload);
+  const criado = await postAutomacao(base, chaveApi, tipo, payload, nucleo.normalizarExecucao);
   if (criado.falha !== null || criado.resposta === null) {
     return {
       tipo,
@@ -236,7 +165,7 @@ async function executarRobot(
       return nucleo.linhaDeTimeout(tipo, Date.now() - inicio);
     }
     await dormir(nucleo.INTERVALO_POLL_MS);
-    const consulta = await getExecucao(base, chaveApi, atual.execucaoId);
+    const consulta = await getExecucao(base, chaveApi, atual.execucaoId, nucleo.normalizarExecucao);
     if (consulta.falha !== null || consulta.resposta === null) {
       return {
         tipo,
@@ -257,6 +186,7 @@ async function executarRobot(
     sucesso,
     duracaoMs: duracao,
     erro: erro ?? mensagem,
+    cacheHit: atual.cache?.hit ?? false,
   });
 }
 

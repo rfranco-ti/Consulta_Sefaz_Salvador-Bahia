@@ -119,7 +119,11 @@ export class AutomationService {
 
   async consultar(id: string, apiKeyId: string): Promise<ExecucaoResposta> {
     const registro = this.repositorio.porId(id);
-    return this.mapearComAcesso(registro, apiKeyId);
+    const resposta = this.mapearComAcesso(registro, apiKeyId);
+    if (resposta.status === 'SUCCESS') {
+      this.propagarSucessoParaCache(registro);
+    }
+    return resposta;
   }
 
   async cancelar(id: string, apiKeyId: string): Promise<void> {
@@ -223,7 +227,12 @@ export class AutomationService {
     }
     const concluida = await this.aguardarConclusao(base.id, espera * 1000);
     if (concluida) {
-      return this.mapearComAcesso(this.repositorio.porId(base.id), input.apiKeyId);
+      const registro = this.repositorio.porId(base.id);
+      const resposta = this.mapearComAcesso(registro, input.apiKeyId);
+      if (resposta.status === 'SUCCESS') {
+        this.propagarSucessoParaCache(registro);
+      }
+      return resposta;
     }
     const atual = this.repositorio.porId(base.id);
     return {
@@ -335,6 +344,38 @@ export class AutomationService {
       id,
       terminal: true,
     };
+  }
+
+  private propagarSucessoParaCache(registro: ExecucaoRegistro): void {
+    if (registro.status !== 'SUCCESS') {
+      return;
+    }
+    const params = this.paramsArmazenados(registro.payload);
+    if (params === null) {
+      return;
+    }
+    let bruto: unknown;
+    try {
+      bruto = JSON.parse(registro.resultado ?? '') as unknown;
+    } catch {
+      return;
+    }
+    if (!ehRegistro(bruto) || bruto['sucesso'] !== true || !ehRegistro(bruto['dados'])) {
+      return;
+    }
+    const mensagem = bruto['mensagem'];
+    const gravavel: Record<string, unknown> = { sucesso: true, dados: bruto['dados'] };
+    if (typeof mensagem === 'string' && mensagem.length > 0) {
+      gravavel['mensagem'] = mensagem;
+    }
+    try {
+      if (this.cache.ler(registro.tipo, params) !== null) {
+        return;
+      }
+      this.cache.gravarSucesso(registro.tipo, params, gravavel);
+    } catch (erro) {
+      this.logger.warn({ execucaoId: registro.id, err: erro }, 'Resultado ao vivo fora do cache');
+    }
   }
 
   private exigirMesmaConsulta(
