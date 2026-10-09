@@ -44,6 +44,7 @@ let navegador: Browser;
 let formHtml = '';
 let resultadoHtml = '';
 let resultadoSemPendenciaHtml = '';
+let erroCaptchaHtml = '';
 
 function montarExecucao(id: string, carga: unknown): Execucao {
   const texto = typeof carga === 'string' ? carga : JSON.stringify(carga);
@@ -111,6 +112,7 @@ beforeAll(async () => {
   formHtml = await lerFixture('cadin-salvador-form.html');
   resultadoHtml = await lerFixture('cadin-salvador-resultado.html');
   resultadoSemPendenciaHtml = await lerFixture('cadin-salvador-resultado-sem-pendencia.html');
+  erroCaptchaHtml = await lerFixture('cadin-salvador-erro-captcha.html');
 }, 60000);
 
 beforeEach(() => {
@@ -407,6 +409,194 @@ describe('robot cadin-salvador', () => {
         );
         expect(resultado['sucesso']).toBe(false);
         expect(String(resultado['mensagem'])).toMatch(/não encontrado/);
+      } finally {
+        await fechar();
+      }
+    },
+  );
+
+  it(
+    'falha rica quando a imagem do captcha não termina de carregar',
+    { timeout: 90000 },
+    async () => {
+      const { sessao, fechar } = await abrirSessao();
+      try {
+        await servirPortal(sessao, formHtml, resultadoHtml);
+        await sessao.page.unroute('**/CaptchaImage.aspx*');
+        await sessao.page.route('**/CaptchaImage.aspx*', (rota) => rota.abort());
+        registrarCaptchaFake([]);
+        let erro: unknown = null;
+        try {
+          await executarCadinSalvador(
+            montarExecucao('exe_captcha_sem_carga', { documento: CNPJ_DIGITOS }),
+            sessao,
+          );
+        } catch (e) {
+          erro = e;
+        }
+        expect(erro).toBeInstanceOf(EtapaError);
+        expect((erro as EtapaError).etapa).toBe('resolver-captcha');
+        expect((erro as Error).message).toContain('não carregou');
+      } finally {
+        await fechar();
+      }
+    },
+  );
+
+  it(
+    'renova a imagem quando o resolvedor volta vazio e conclui na nova leitura',
+    { timeout: 90000 },
+    async () => {
+      const { sessao, fechar } = await abrirSessao();
+      try {
+        await servirPortal(sessao, formHtml, resultadoHtml);
+        const chamadas: string[] = [];
+        let falso = 0;
+        const { registrarResolvedorCaptcha: registrar } = await import(
+          '../../src/automations/base/captcha.js'
+        );
+        registrar(async (caminhoImagem) => {
+          chamadas.push(caminhoImagem);
+          falso += 1;
+          return falso === 1 ? '' : 'AB12';
+        });
+        const resultado = await executarCadinSalvador(
+          montarExecucao('exe_renova_captcha', { documento: CNPJ_DIGITOS }),
+          sessao,
+        );
+        expect(chamadas.length).toBeGreaterThanOrEqual(2);
+        expect(resultado['sucesso']).toBe(true);
+        const dados = resultado['dados'] as Record<string, unknown>;
+        expect(dados['nome']).toBe('EMPRESA EXEMPLO LTDA');
+      } finally {
+        await fechar();
+      }
+    },
+  );
+
+  it(
+    'tenta um novo captcha quando o portal rejeita o código e conclui na segunda tentativa',
+    { timeout: 90000 },
+    async () => {
+      const { sessao, fechar } = await abrirSessao();
+      try {
+        let chamadas = 0;
+        await sessao.page.route('**/default.aspx', (rota) =>
+          rota.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: formHtml }),
+        );
+        await sessao.page.route(
+          (url) => url.href.includes('resultado.aspx'),
+          (rota) => {
+            chamadas += 1;
+            const corpo = chamadas === 1 ? erroCaptchaHtml : resultadoHtml;
+            return rota.fulfill({
+              status: 200,
+              contentType: 'text/html; charset=utf-8',
+              body: corpo,
+            });
+          },
+        );
+        await sessao.page.route('**/CaptchaImage.aspx*', (rota) =>
+          rota.fulfill({ status: 200, contentType: 'image/png', body: PNG_1PX }),
+        );
+        const capturados: string[] = [];
+        registrarCaptchaFake(capturados);
+        const resultado = await executarCadinSalvador(
+          montarExecucao('exe_retry_captcha', { documento: CNPJ_DIGITOS }),
+          sessao,
+        );
+        expect(chamadas).toBe(2);
+        expect(capturados).toHaveLength(2);
+        expect(resultado['sucesso']).toBe(true);
+        const dados = resultado['dados'] as Record<string, unknown>;
+        expect(dados['nome']).toBe('EMPRESA EXEMPLO LTDA');
+      } finally {
+        await fechar();
+      }
+    },
+  );
+
+  it(
+    'falha rica em português quando o portal rejeita o captcha em todas as tentativas',
+    { timeout: 90000 },
+    async () => {
+      const { sessao, fechar } = await abrirSessao();
+      try {
+        await sessao.page.route('**/default.aspx', (rota) =>
+          rota.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: formHtml }),
+        );
+        let chamadas = 0;
+        await sessao.page.route(
+          (url) => url.href.includes('resultado.aspx'),
+          (rota) => {
+            chamadas += 1;
+            const corpo = erroCaptchaHtml.replace(
+              /guid=[a-f0-9-]+/,
+              'guid=00000000-0000-0000-0000-' + String(chamadas).padStart(12, '0'),
+            );
+            return rota.fulfill({
+              status: 200,
+              contentType: 'text/html; charset=utf-8',
+              body: corpo,
+            });
+          },
+        );
+        await sessao.page.route('**/CaptchaImage.aspx*', (rota) =>
+          rota.fulfill({ status: 200, contentType: 'image/png', body: PNG_1PX }),
+        );
+        registrarCaptchaFake([]);
+        let erro: unknown = null;
+        try {
+          await executarCadinSalvador(
+            montarExecucao('exe_captcha_esgotado', { documento: CNPJ_DIGITOS }),
+            sessao,
+          );
+        } catch (e) {
+          erro = e;
+        }
+        expect(erro).toBeInstanceOf(EtapaError);
+        expect((erro as EtapaError).etapa).toBe('aguardar-resultado');
+        expect((erro as Error).message).toContain('Captcha rejeitado');
+      } finally {
+        await fechar();
+      }
+    },
+  );
+
+  it(
+    'falha rica com a chave do resultado quando nem resultado nem erro de captcha aparecem',
+    { timeout: 90000 },
+    async () => {
+      const { sessao, fechar } = await abrirSessao();
+      try {
+        await sessao.page.route('**/default.aspx', (rota) =>
+          rota.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: formHtml }),
+        );
+        await sessao.page.route(
+          (url) => url.href.includes('resultado.aspx'),
+          (rota) =>
+            rota.fulfill({
+              status: 200,
+              contentType: 'text/html; charset=utf-8',
+              body: '<html><body><p>resposta sem marcadores</p></body></html>',
+            }),
+        );
+        await sessao.page.route('**/CaptchaImage.aspx*', (rota) =>
+          rota.fulfill({ status: 200, contentType: 'image/png', body: PNG_1PX }),
+        );
+        registrarCaptchaFake([]);
+        let erro: unknown = null;
+        try {
+          await executarCadinSalvador(
+            montarExecucao('exe_sem_marcadores', { documento: CNPJ_DIGITOS }),
+            sessao,
+          );
+        } catch (e) {
+          erro = e;
+        }
+        expect(erro).toBeInstanceOf(EtapaError);
+        expect((erro as EtapaError).etapa).toBe('aguardar-resultado');
+        expect((erro as Error).message).toContain('bloco_resultado');
       } finally {
         await fechar();
       }

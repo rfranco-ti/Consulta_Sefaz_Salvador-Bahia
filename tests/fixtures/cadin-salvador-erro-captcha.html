@@ -1,0 +1,18 @@
+<html>
+<head><title>CADIN Salvador - Consulta</title></head>
+<body>
+<form action="resultado.aspx" method="get" name="cadin">
+<p>Tipo de documento:
+<input type="radio" name="ctl00$ContentPlaceHolder1$rbtipodocumento" id="ctl00_ContentPlaceHolder1_rbtipodocumento_0" value="1" /> Pessoa Física
+<input type="radio" name="ctl00$ContentPlaceHolder1$rbtipodocumento" id="ctl00_ContentPlaceHolder1_rbtipodocumento_1" value="2" checked="checked" /> Pessoa Jurídica
+</p>
+<p><span id="ctl00_ContentPlaceHolder1_lblCPFCNPJ">CNPJ:</span> <input type="text" name="ctl00$ContentPlaceHolder1$TxtNumDocumento" id="ctl00_ContentPlaceHolder1_TxtNumDocumento" maxlength="18" /></p>
+<img src="CaptchaImage.aspx?guid=39d138a2-e169-418c-8fe9-836badc8245f" border="0" width="180" height="50" />
+<p>Código: <input type="text" name="ctl00$ContentPlaceHolder1$CaptchaControl1" maxlength="5" /></p>
+<div id="ctl00_ContentPlaceHolder1_pnlErroCaptcha">
+<span id="ctl00_ContentPlaceHolder1_lblCaptcha" style="color:Red;">O código digitado não é igual ao da imagem. Tente novamente.</span>
+</div>
+<input type="submit" name="ctl00$ContentPlaceHolder1$btnConsultar" id="ctl00_ContentPlaceHolder1_btnConsultar" value="Consultar" />
+</form>
+</body>
+</html>

@@ -77,6 +77,14 @@
         "#ctl00_ContentPlaceHolder1_lblMensagem",
         "xpath=//*[contains(@id, 'lblMensagem')]"
       ]
+    },
+    "erro_captcha": {
+      "descricao": "Aviso do portal de que o código digitado não confere com a imagem",
+      "seletores": [
+        "#ctl00_ContentPlaceHolder1_lblCaptcha",
+        "span[id*='lblCaptcha']",
+        "xpath=//span[contains(@id, 'lblCaptcha')]"
+      ]
     }
   },
   "steps": [
@@ -105,13 +113,13 @@
     },
     {
       "id": "submeter-consulta",
-      "descricao": "Clica em Consultar",
+      "descricao": "Resolve o captcha novo a cada tentativa, clica em Consultar e repete quando o portal rejeita o código",
       "acao": "clicar",
       "chaveSeletor": "botao_consultar"
     },
     {
       "id": "aguardar-resultado",
-      "descricao": "Aguarda o bloco de resultado carregar",
+      "descricao": "Aguarda o bloco de resultado ou o aviso de captcha inválido carregar",
       "acao": "esperar",
       "chaveSeletor": "bloco_resultado"
     },

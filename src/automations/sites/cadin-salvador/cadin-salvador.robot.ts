@@ -26,6 +26,20 @@ export const CADIN_SALVADOR_TIMEOUT_MS = 120000;
 
 const TIMEOUT_NAVEGACAO_MS = 30000;
 const TIMEOUT_RESULTADO_POR_TENTATIVA_MS = 8000;
+const TIMEOUT_IMAGEM_CAPTCHA_MS = 10000;
+const INTERVALO_IMAGEM_CAPTCHA_MS = 250;
+const TIMEOUT_TROCA_CAPTCHA_MS = 5000;
+const INTERVALO_SONDAGEM_RESULTADO_MS = 500;
+const MAX_TENTATIVAS_CAPTCHA = 8;
+const MAX_REFRESCOS_CAPTCHA = 2;
+
+function ehErroCaptchaVazio(erro: unknown): boolean {
+  return (
+    erro instanceof EtapaError &&
+    erro.etapa === 'resolver-captcha' &&
+    erro.message.includes('texto vazio')
+  );
+}
 
 const MENSAGEM_DOCUMENTO_INVALIDO = 'Documento inválido: informe CPF com 11 dígitos ou CNPJ com 14 dígitos';
 
@@ -372,8 +386,7 @@ export class CadinSalvadorRobot extends BaseRobot {
       await this.navegar(pagina, ctx, config);
       await this.selecionarTipoDocumento(pagina, ctx, cadeias, tipoDocumento);
       await this.preencherDocumento(pagina, ctx, cadeias, documento);
-      await this.resolverCaptchaEtapa(pagina, ctx, cadeias, documento);
-      await this.submeterConsulta(pagina, ctx, cadeias);
+      await this.submeterConsulta(pagina, ctx, cadeias, documento, tipoDocumento);
       const brutos = await this.extrairDados(pagina, ctx);
       const dados = normalizarDados(documento, tipoDocumento, brutos);
       await this.gerarArtefatos(pagina, ctx, documento, montarDadosRelatorio(dados));
@@ -431,7 +444,14 @@ export class CadinSalvadorRobot extends BaseRobot {
     try {
       const chave = tipoDocumento === 'PF' ? 'radio_pf' : 'radio_pj';
       const opcao = await localizarPorChave(pagina, chave, cadeias, 'selecionar-tipo-documento');
+      const marcada = await opcao.isChecked().catch(() => false);
+      if (marcada) {
+        this.emitir(ctx, 'log', `Tipo de documento ${tipoDocumento} já selecionado`);
+        return;
+      }
+      const captchaAnterior = await this.fonteCaptchaAtual(pagina, cadeias);
       await opcao.check({ force: true }).catch(() => opcao.click({ force: true }));
+      await this.aguardarTrocaCaptcha(pagina, ctx, cadeias, captchaAnterior);
     } catch (erro) {
       throw normalizarErro('selecionar-tipo-documento', erro);
     }
@@ -474,6 +494,7 @@ export class CadinSalvadorRobot extends BaseRobot {
       const diretorio = path.join(tmpdir(), 'api-sefaz-ssa', `cadin-salvador-${documento}`);
       await mkdir(diretorio, { recursive: true });
       const caminhoImagem = path.join(diretorio, 'captcha.png');
+      await this.aguardarImagemCaptcha(pagina, ctx, imagem);
       await imagem.screenshot({ path: caminhoImagem });
       const codigo = (await decodificarCaptcha(caminhoImagem)).trim();
       if (codigo === '') {
@@ -487,27 +508,215 @@ export class CadinSalvadorRobot extends BaseRobot {
     }
   }
 
+  private async aguardarImagemCaptcha(
+    pagina: Page,
+    ctx: ExecucaoCtx,
+    imagem: NonNullable<Awaited<ReturnType<typeof detectarCaptchaImagem>>>,
+  ): Promise<void> {
+    exigirTempo(ctx.signal, 'resolver-captcha');
+    const inicio = Date.now();
+    while (Date.now() - inicio < TIMEOUT_IMAGEM_CAPTCHA_MS) {
+      exigirTempo(ctx.signal, 'resolver-captcha');
+      const carregada = await imagem
+        .evaluate((elemento) => {
+          const figura = elemento as unknown as Record<string, unknown>;
+          const completa = figura['complete'] === true;
+          const largura = figura['naturalWidth'];
+          return completa && typeof largura === 'number' && largura > 0;
+        })
+        .catch(() => false);
+      if (carregada) {
+        return;
+      }
+      await pagina.waitForTimeout(INTERVALO_IMAGEM_CAPTCHA_MS);
+    }
+    throw new EtapaError(
+      'resolver-captcha',
+      'Imagem do captcha não carregou: a figura não terminou de baixar antes da leitura.',
+    );
+  }
+
   private async submeterConsulta(
     pagina: Page,
     ctx: ExecucaoCtx,
     cadeias: Record<string, CadeiaSeletores>,
+    documento: string,
+    tipoDocumento: 'PF' | 'PJ',
   ): Promise<void> {
     exigirTempo(ctx.signal, 'submeter-consulta');
     this.emitir(ctx, 'log', 'Submetendo a consulta e aguardando o resultado');
     try {
-      const botao = await localizarPorChave(pagina, 'botao_consultar', cadeias, 'submeter-consulta');
-      await botao.click();
-      exigirTempo(ctx.signal, 'aguardar-resultado');
-      await localizarPorChave(
-        pagina,
-        'bloco_resultado',
-        cadeias,
+      let tentativa = 1;
+      let refrescos = 0;
+      while (tentativa <= MAX_TENTATIVAS_CAPTCHA) {
+        exigirTempo(ctx.signal, 'submeter-consulta');
+        try {
+          await this.resolverCaptchaEtapa(pagina, ctx, cadeias, documento);
+        } catch (erro) {
+          if (ehErroCaptchaVazio(erro) && refrescos < MAX_REFRESCOS_CAPTCHA) {
+            refrescos += 1;
+            this.emitir(
+              ctx,
+              'warn',
+              `Leitura do captcha abaixo da qualidade na tentativa ${String(tentativa)} — renovando a imagem ${String(refrescos)} de ${String(MAX_REFRESCOS_CAPTCHA)}.`,
+            );
+            await this.renovarCaptcha(pagina, ctx, cadeias, tipoDocumento);
+            continue;
+          }
+          throw erro;
+        }
+        const botao = await localizarPorChave(pagina, 'botao_consultar', cadeias, 'submeter-consulta');
+        const captchaAnterior = await this.fonteCaptchaAtual(pagina, cadeias);
+        await botao.click();
+        exigirTempo(ctx.signal, 'aguardar-resultado');
+        const desfecho = await this.aguardarResultadoOuErro(pagina, ctx, cadeias, captchaAnterior);
+        if (desfecho === 'resultado') {
+          return;
+        }
+        this.emitir(
+          ctx,
+          'warn',
+          `O portal rejeitou o código do captcha na tentativa ${String(tentativa)} de ${String(MAX_TENTATIVAS_CAPTCHA)} — fotografando nova imagem.`,
+        );
+        tentativa += 1;
+      }
+      throw new EtapaError(
         'aguardar-resultado',
-        TIMEOUT_RESULTADO_POR_TENTATIVA_MS,
+        `Captcha rejeitado pelo portal após ${String(MAX_TENTATIVAS_CAPTCHA)} tentativas: o código digitado não confere com a imagem.`,
       );
     } catch (erro) {
       throw normalizarErro('aguardar-resultado', erro);
     }
+  }
+
+  private async renovarCaptcha(
+    pagina: Page,
+    ctx: ExecucaoCtx,
+    cadeias: Record<string, CadeiaSeletores>,
+    tipoDocumento: 'PF' | 'PJ',
+  ): Promise<void> {
+    exigirTempo(ctx.signal, 'resolver-captcha');
+    const outro = tipoDocumento === 'PF' ? 'radio_pj' : 'radio_pf';
+    const alvo = tipoDocumento === 'PF' ? 'radio_pf' : 'radio_pj';
+    try {
+      const anterior = await this.fonteCaptchaAtual(pagina, cadeias);
+      const opcaoOutro = await localizarPorChave(pagina, outro, cadeias, 'resolver-captcha');
+      await opcaoOutro.check({ force: true }).catch(() => opcaoOutro.click({ force: true }));
+      await this.aguardarTrocaCaptcha(pagina, ctx, cadeias, anterior);
+      await this.aguardarCampoHabilitado(pagina, ctx, cadeias);
+      const atual = await this.fonteCaptchaAtual(pagina, cadeias);
+      const opcaoAlvo = await localizarPorChave(pagina, alvo, cadeias, 'resolver-captcha');
+      await opcaoAlvo.check({ force: true }).catch(() => opcaoAlvo.click({ force: true }));
+      await this.aguardarTrocaCaptcha(pagina, ctx, cadeias, atual);
+      await this.aguardarCampoHabilitado(pagina, ctx, cadeias);
+    } catch (erro) {
+      throw normalizarErro('resolver-captcha', erro);
+    }
+  }
+
+  private async aguardarCampoHabilitado(
+    pagina: Page,
+    ctx: ExecucaoCtx,
+    cadeias: Record<string, CadeiaSeletores>,
+  ): Promise<void> {
+    const seletores = cadeias['campo_documento']?.seletores ?? [];
+    const alvo = seletores[0] ?? 'input';
+    const inicio = Date.now();
+    while (Date.now() - inicio < TIMEOUT_TROCA_CAPTCHA_MS) {
+      exigirTempo(ctx.signal, 'resolver-captcha');
+      const habilitado = await pagina
+        .locator(alvo)
+        .first()
+        .isEnabled()
+        .catch(() => false);
+      if (habilitado) {
+        return;
+      }
+      await pagina.waitForTimeout(INTERVALO_SONDAGEM_RESULTADO_MS);
+    }
+    this.emitir(
+      ctx,
+      'warn',
+      'Campo de documento segue desabilitado após renovar o captcha — seguindo para nova leitura.',
+    );
+  }
+
+  private async fonteCaptchaAtual(
+    pagina: Page,
+    cadeias: Record<string, CadeiaSeletores>,
+  ): Promise<string | null> {
+    const seletores = cadeias['imagem_captcha']?.seletores ?? [];
+    const alvo = seletores[0] ?? 'img[src*="captcha" i]';
+    const localizador = pagina.locator(alvo).first();
+    const quantidade = await localizador.count().catch(() => 0);
+    if (quantidade === 0) {
+      return null;
+    }
+    return localizador.getAttribute('src', { timeout: 2000 }).catch(() => null);
+  }
+
+  private async aguardarTrocaCaptcha(
+    pagina: Page,
+    ctx: ExecucaoCtx,
+    cadeias: Record<string, CadeiaSeletores>,
+    anterior: string | null,
+  ): Promise<void> {
+    const inicio = Date.now();
+    while (Date.now() - inicio < TIMEOUT_TROCA_CAPTCHA_MS) {
+      exigirTempo(ctx.signal, 'selecionar-tipo-documento');
+      const atual = await this.fonteCaptchaAtual(pagina, cadeias);
+      if (anterior === null || (atual !== null && atual !== anterior)) {
+        return;
+      }
+      await pagina.waitForTimeout(INTERVALO_SONDAGEM_RESULTADO_MS);
+    }
+    this.emitir(
+      ctx,
+      'warn',
+      'Imagem do captcha não recarregou após a troca do tipo de documento — seguindo com a imagem atual.',
+    );
+  }
+
+  private async cadeiaAnexada(
+    pagina: Page,
+    cadeia: CadeiaSeletores | undefined,
+  ): Promise<boolean> {
+    for (const seletor of cadeia?.seletores ?? []) {
+      const quantidade = await pagina
+        .locator(seletor)
+        .first()
+        .count()
+        .catch(() => 0);
+      if (quantidade > 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private async aguardarResultadoOuErro(
+    pagina: Page,
+    ctx: ExecucaoCtx,
+    cadeias: Record<string, CadeiaSeletores>,
+    captchaAnterior: string | null,
+  ): Promise<'resultado' | 'captcha'> {
+    exigirTempo(ctx.signal, 'aguardar-resultado');
+    const inicio = Date.now();
+    while (Date.now() - inicio < TIMEOUT_RESULTADO_POR_TENTATIVA_MS) {
+      exigirTempo(ctx.signal, 'aguardar-resultado');
+      if (await this.cadeiaAnexada(pagina, cadeias['bloco_resultado'])) {
+        return 'resultado';
+      }
+      const captchaAtual = await this.fonteCaptchaAtual(pagina, cadeias);
+      const respostaNova =
+        captchaAtual !== null && captchaAnterior !== null && captchaAtual !== captchaAnterior;
+      if (respostaNova && (await this.cadeiaAnexada(pagina, cadeias['erro_captcha']))) {
+        return 'captcha';
+      }
+      await pagina.waitForTimeout(INTERVALO_SONDAGEM_RESULTADO_MS);
+    }
+    await localizarPorChave(pagina, 'bloco_resultado', cadeias, 'aguardar-resultado', 1000);
+    return 'resultado';
   }
 
   private async extrairDados(pagina: Page, ctx: ExecucaoCtx): Promise<CadinBruto> {
