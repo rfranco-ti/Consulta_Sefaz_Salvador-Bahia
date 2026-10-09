@@ -262,12 +262,19 @@ async function executarRobot(
 
 async function principal(): Promise<number> {
   const nucleo = await import('./smoke-nucleo.js');
+  const parseado = nucleo.parsearApenas(process.argv.slice(2));
+  if (parseado.erro !== null) {
+    process.stderr.write('smoke: ' + parseado.erro + '\n');
+    return 1;
+  }
   const { registrarExtratorTextoPdf } = await import('../src/automations/base/ocr.js');
   const { cadeiaExtracaoTextoPdf } = await import(
     '../src/automations/base/ocr/extracao-pdf.js'
   );
   const { registrarResolvedorCaptcha } = await import('../src/automations/base/captcha.js');
-  const { resolverCaptchaLocal } = await import('../src/automations/base/captcha/resolvedor.js');
+  const { resolverCaptchaLocal, encerrarWorkerCaptcha } = await import(
+    '../src/automations/base/captcha/resolvedor.js'
+  );
   const { buildApp } = await import('../src/app/app.js');
   const { iniciarWorker, pararWorker } = await import('../src/modules/jobs/index.js');
   const { db, fecharDb } = await import('../src/database/index.js');
@@ -286,7 +293,10 @@ async function principal(): Promise<number> {
     const base = baseLocal(porta);
     const chaveApi = await criarChaveApi(base, env.ADMIN_KEY);
     const linhas: LinhaRelatorio[] = [];
-    const plano: ItemPlano[] = nucleo.lerPlanoSmoke(process.env);
+    const plano: ItemPlano[] = nucleo.filtrarPlano(
+      nucleo.lerPlanoSmoke(process.env),
+      parseado.tipos,
+    );
     for (const item of plano) {
       if (item.acao === 'pular') {
         linhas.push(nucleo.linhaDeSkip(item.tipo, 'sem ' + item.variavel));
@@ -299,9 +309,10 @@ async function principal(): Promise<number> {
       linhas.push(await executarRobot(base, chaveApi, item.tipo, item.payload, nucleo));
     }
     const relatorio = nucleo.montarRelatorio(linhas);
-    process.stdout.write(relatorio.texto + '\n');
+    await nucleo.drenarStdout(relatorio.texto);
     return relatorio.exitCode;
   } finally {
+    await encerrarWorkerCaptcha();
     await pararWorker();
     await app.close();
     await encerrarBrowserService();
@@ -309,8 +320,13 @@ async function principal(): Promise<number> {
   }
 }
 
-const codigo = await principal().catch((erro: unknown) => {
-  process.stderr.write('smoke falhou: ' + mensagemDeErro(erro) + '\n');
-  return 1;
-});
-process.exitCode = codigo;
+let codigo = 1;
+try {
+  codigo = await principal();
+} catch (erro: unknown) {
+  await new Promise<void>((resolver) => {
+    process.stderr.write('smoke falhou: ' + mensagemDeErro(erro) + '\n', () => resolver());
+  });
+  codigo = 1;
+}
+process.exit(codigo);

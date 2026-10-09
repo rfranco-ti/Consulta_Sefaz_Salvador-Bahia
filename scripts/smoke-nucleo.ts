@@ -71,6 +71,33 @@ export function lerPlanoSmoke(variaveis: Record<string, string | undefined>): It
   return TIPOS_AUTOMACAO.map((tipo) => lerItemPlano(tipo, variaveis));
 }
 
+export function parsearApenas(args: readonly string[]): { tipos: TipoAutomacao[]; erro: string | null } {
+  const indice = args.indexOf('--apenas');
+  if (indice === -1) {
+    return { tipos: [], erro: null };
+  }
+  const bruto = args[indice + 1];
+  if (bruto === undefined || bruto.trim() === '') {
+    return { tipos: [], erro: '--apenas exige ao menos um tipo após o sinalizador' };
+  }
+  const nomes = bruto
+    .split(',')
+    .map((nome) => nome.trim())
+    .filter((nome) => nome !== '');
+  const desconhecidos = nomes.filter((nome) => !TIPOS_AUTOMACAO.includes(nome as TipoAutomacao));
+  if (desconhecidos.length > 0) {
+    return { tipos: [], erro: 'tipos desconhecidos em --apenas: ' + desconhecidos.join(', ') };
+  }
+  return { tipos: nomes as TipoAutomacao[], erro: null };
+}
+
+export function filtrarPlano(plano: readonly ItemPlano[], tipos: readonly TipoAutomacao[]): ItemPlano[] {
+  if (tipos.length === 0) {
+    return [...plano];
+  }
+  return plano.filter((item) => tipos.includes(item.tipo));
+}
+
 function lerItemPlano(
   tipo: TipoAutomacao,
   variaveis: Record<string, string | undefined>,
@@ -229,4 +256,10 @@ export function montarRelatorio(linhas: LinhaRelatorio[]): RelatorioSmoke {
     ' timeout';
   const texto = ['Smoke e2e contra portais reais', cabecalho, ...corpo, resumo].join('\n');
   return { texto, exitCode: calcularExitCode(linhas) };
+}
+
+export function drenarStdout(texto: string): Promise<void> {
+  return new Promise<void>((resolver) => {
+    process.stdout.write(texto + '\n', () => resolver());
+  });
 }

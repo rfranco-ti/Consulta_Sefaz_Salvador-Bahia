@@ -7,6 +7,7 @@ import {
   deveContinuarPoll,
   ehStatusTerminal,
   estourouOrcamento,
+  filtrarPlano,
   formatarDuracao,
   lerPlanoSmoke,
   linhaDeEntradaInvalida,
@@ -15,6 +16,7 @@ import {
   linhaDoDesfecho,
   montarRelatorio,
   nomeVariavelDoTipo,
+  parsearApenas,
   validarPayloadDoTipo,
   type ItemPlano,
   type LinhaRelatorio,
@@ -316,5 +318,51 @@ describe('relatório e exit code', () => {
     ]);
     expect(relatorio.exitCode).toBe(1);
     expect(relatorio.texto).toContain('Resumo: 1 ok, 1 fail, 0 skip, 1 timeout');
+  });
+});
+
+describe('parsearApenas', () => {
+  it('sem --apenas devolve lista vazia e sem erro', () => {
+    const parseado = parsearApenas(['outro-arg']);
+    expect(parseado.tipos).toEqual([]);
+    expect(parseado.erro).toBeNull();
+  });
+
+  it('lê tipos separados por vírgula preservando a ordem', () => {
+    const parseado = parsearApenas(['--apenas', 'cadin-salvador, ficha-cadastral']);
+    expect(parseado.erro).toBeNull();
+    expect(parseado.tipos).toEqual(['cadin-salvador', 'ficha-cadastral']);
+  });
+
+  it('sem valor após --apenas devolve erro', () => {
+    const parseado = parsearApenas(['--apenas']);
+    expect(parseado.erro).toContain('ao menos um tipo');
+    expect(parseado.tipos).toEqual([]);
+  });
+
+  it('tipo desconhecido devolve erro listando os nomes', () => {
+    const parseado = parsearApenas(['--apenas', 'sefaz-bahia,robot-fantasma']);
+    expect(parseado.erro).toBe('tipos desconhecidos em --apenas: robot-fantasma');
+    expect(parseado.tipos).toEqual([]);
+  });
+});
+
+describe('filtrarPlano', () => {
+  it('lista vazia mantém o plano completo', () => {
+    const plano = lerPlanoSmoke(VARIAVEIS_VALIDAS);
+    expect(filtrarPlano(plano, [])).toEqual(plano);
+  });
+
+  it('mantém apenas os tipos pedidos e descarta os demais', () => {
+    const plano = lerPlanoSmoke(VARIAVEIS_VALIDAS);
+    const filtrado = filtrarPlano(plano, ['ficha-cadastral', 'dam-tff-tll']);
+    expect(filtrado.map((item) => item.tipo)).toEqual(['ficha-cadastral', 'dam-tff-tll']);
+  });
+
+  it('filtra preservando itens que seriam pulados', () => {
+    const plano = lerPlanoSmoke({});
+    const filtrado = filtrarPlano(plano, ['iptu-salvador']);
+    expect(filtrado).toHaveLength(1);
+    expect(filtrado[0]?.acao).toBe('pular');
   });
 });
