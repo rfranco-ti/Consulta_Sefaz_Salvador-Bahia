@@ -32,6 +32,8 @@ export const FICHA_CADASTRAL_TIMEOUT_MS = 120000;
 
 const TIMEOUT_NAVEGACAO_MS = 30000;
 const TIMEOUT_DOWNLOAD_MS = 8000;
+const TIMEOUT_ESTABILIZACAO_MS = 15000;
+const TEMPO_ASSENTAMENTO_POS_SELECAO_MS = 1000;
 
 export const fichaCadastralInputSchema = z.object({
   cnpj: z
@@ -257,10 +259,47 @@ export class FichaCadastralRobot extends BaseRobot {
     this.emitir(ctx, 'log', 'Selecionando a pesquisa por CNPJ');
     try {
       const opcao = await localizarPorChave(pagina, 'radio_cnpj', cadeias, 'selecionar-tipo-cnpj');
-      await opcao.check();
+      if ((await opcao.isChecked()) === false) {
+        await opcao.check();
+        await this.aguardarPostbackSelecao(pagina);
+      }
+      if ((await opcao.isChecked()) === false) {
+        throw new EtapaError(
+          'selecionar-tipo-cnpj',
+          'A opção de pesquisa por CNPJ não permaneceu marcada no portal.',
+        );
+      }
     } catch (erro) {
       throw normalizarErro('selecionar-tipo-cnpj', erro);
     }
+  }
+
+  private async aguardarPostbackSelecao(pagina: Page): Promise<void> {
+    await pagina.waitForTimeout(TEMPO_ASSENTAMENTO_POS_SELECAO_MS);
+    await pagina
+      .waitForFunction(
+        (): boolean => {
+          const sys = (
+            globalThis as unknown as {
+              Sys?: {
+                WebForms?: {
+                  PageRequestManager?: {
+                    getInstance: () => { get_isInAsyncPostBack: () => boolean };
+                  };
+                };
+              };
+            }
+          ).Sys;
+          const gerente = sys?.WebForms?.PageRequestManager?.getInstance();
+          if (!gerente) {
+            return true;
+          }
+          return gerente.get_isInAsyncPostBack() === false;
+        },
+        undefined,
+        { timeout: TIMEOUT_ESTABILIZACAO_MS },
+      )
+      .catch(() => undefined);
   }
 
   private async preencherCnpj(
@@ -275,6 +314,16 @@ export class FichaCadastralRobot extends BaseRobot {
       const campo = await localizarPorChave(pagina, 'campo_cnpj', cadeias, 'preencher-cnpj');
       await campo.fill('');
       await campo.fill(cnpj);
+      if ((await campo.inputValue()) !== cnpj) {
+        await campo.fill('');
+        await campo.fill(cnpj);
+      }
+      if ((await campo.inputValue()) !== cnpj) {
+        throw new EtapaError(
+          'preencher-cnpj',
+          'O portal descartou o CNPJ preenchido antes da consulta.',
+        );
+      }
     } catch (erro) {
       throw normalizarErro('preencher-cnpj', erro);
     }
@@ -288,6 +337,20 @@ export class FichaCadastralRobot extends BaseRobot {
     exigirTempo(ctx.signal, 'submeter-consulta');
     this.emitir(ctx, 'log', 'Submetendo a consulta e aguardando o PDF oficial');
     try {
+      const opcao = await localizarPorChave(pagina, 'radio_cnpj', cadeias, 'submeter-consulta');
+      if ((await opcao.isChecked()) === false) {
+        throw new EtapaError(
+          'submeter-consulta',
+          'Consulta abortada porque a pesquisa por CNPJ não está marcada no portal.',
+        );
+      }
+      const campo = await localizarPorChave(pagina, 'campo_cnpj', cadeias, 'submeter-consulta');
+      if ((await campo.inputValue()) === '') {
+        throw new EtapaError(
+          'submeter-consulta',
+          'Consulta abortada porque o campo CNPJ está vazio no portal.',
+        );
+      }
       const botao = await localizarPorChave(pagina, 'botao_consultar', cadeias, 'submeter-consulta');
       const esperaDownload = pagina.waitForEvent('download', { timeout: TIMEOUT_DOWNLOAD_MS });
       await botao.click();

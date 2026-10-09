@@ -329,6 +329,32 @@ describe('robot ficha-cadastral', () => {
   );
 
   it(
+    'falha rica quando o portal descarta o CNPJ preenchido',
+    { timeout: 60000 },
+    async () => {
+      const { sessao, fechar } = await abrirSessao();
+      try {
+        const formVolatil = formHtml.replace(
+          'placeholder="CNPJ" maxlength="18"',
+          'placeholder="CNPJ" maxlength="18" oninput="this.value=\'\'"',
+        );
+        await servirPortal(sessao, formVolatil, PDF_OFICIAL);
+        let erro: unknown = null;
+        try {
+          await executarFichaCadastral(montarExecucao('exe_campo_volatil', { cnpj: CNPJ_DIGITOS }), sessao);
+        } catch (e) {
+          erro = e;
+        }
+        expect(erro).toBeInstanceOf(EtapaError);
+        expect((erro as EtapaError).etapa).toBe('preencher-cnpj');
+        expect((erro as Error).message).toContain('descartou');
+      } finally {
+        await fechar();
+      }
+    },
+  );
+
+  it(
     'retorna sucesso falso com mensagem em português quando o portal rejeita o CNPJ',
     { timeout: 90000 },
     async () => {
